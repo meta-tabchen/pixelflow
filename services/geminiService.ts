@@ -1,7 +1,25 @@
 import { GoogleGenAI } from "@google/genai";
 import { GeneratorModel, GenerateImageParams } from "../types";
+import { getUserApiKey } from "./storageService";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Helper to get the current valid API key
+export const getActiveApiKey = () => {
+  return getUserApiKey() || process.env.API_KEY;
+};
+
+// Helper to check if we are forced to use a user key
+export const isKeyRequired = () => {
+  const sysKey = process.env.API_KEY || "";
+  const userKey = getUserApiKey();
+  return sysKey.toLowerCase().startsWith('demo') && !userKey;
+};
+
+// Initialize AI on demand to ensure we always use the latest key
+const getAI = () => {
+  const apiKey = getActiveApiKey();
+  if (!apiKey) throw new Error("API Key is missing. Please provide a Gemini API Key in Settings.");
+  return new GoogleGenAI({ apiKey });
+};
 
 // --- Retry Logic ---
 const MAX_RETRIES = 3;
@@ -40,7 +58,12 @@ export const fileToBase64 = (file: File): Promise<string> => {
 };
 
 export const generateImageContent = async (params: GenerateImageParams): Promise<string> => {
+  if (isKeyRequired()) {
+    throw new Error("DEMO_KEY_RESTRICTION: The current system key is for demonstration only. Please enter your own Gemini API Key in Settings to enable generation.");
+  }
+
   return withRetry(async () => {
+    const ai = getAI();
     const parts: any[] = [];
     
     const allImages: string[] = [];
@@ -63,10 +86,8 @@ export const generateImageContent = async (params: GenerateImageParams): Promise
         });
     }
 
-    // Append Camera/Shot Instructions to Prompt
     let finalPrompt = params.prompt;
     if (params.camera) {
-        // Append camera details to the end of the prompt
         finalPrompt = `${finalPrompt}, ${params.camera}`;
     }
 
@@ -104,14 +125,18 @@ export const generateImageContent = async (params: GenerateImageParams): Promise
 };
 
 export const optimizePrompt = async (rawPrompt: string): Promise<string> => {
+  if (isKeyRequired()) {
+      throw new Error("DEMO_KEY_RESTRICTION");
+  }
+
   return withRetry(async () => {
+    const ai = getAI();
     try {
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: `You are an expert prompt engineer for AI image generators. Rewrite the following user description into a highly detailed, artistic, and effective image generation prompt. Keep it under 100 words. \n\nUser Input: "${rawPrompt}"\n\nOptimized Prompt:`,
       });
       let text = response.text || rawPrompt;
-      // Clean up potential prefixes
       text = text.replace(/^(\*\*?)?Optimized Prompt:?(\*\*?)?\s*/i, "").trim();
       return text;
     } catch (error) {
@@ -122,7 +147,12 @@ export const optimizePrompt = async (rawPrompt: string): Promise<string> => {
 };
 
 export const imageToText = async (imageBase64: string): Promise<string> => {
+  if (isKeyRequired()) {
+      throw new Error("DEMO_KEY_RESTRICTION");
+  }
+
   return withRetry(async () => {
+    const ai = getAI();
     try {
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview', 

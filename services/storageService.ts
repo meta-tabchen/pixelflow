@@ -5,6 +5,21 @@ import { ProjectMeta, HistoryItem, WorkflowTemplate } from '../types';
 const PROJECTS_INDEX_KEY = 'aether_projects_index';
 const HISTORY_KEY = 'aether_global_history';
 const WORKFLOWS_LIBRARY_KEY = 'aether_workflows_library';
+const USER_API_KEY_STORAGE = 'pixelflow_user_api_key';
+
+// --- API Key Management ---
+
+export const getUserApiKey = (): string | null => {
+  return localStorage.getItem(USER_API_KEY_STORAGE);
+};
+
+export const setUserApiKey = (key: string | null) => {
+  if (key) {
+    localStorage.setItem(USER_API_KEY_STORAGE, key);
+  } else {
+    localStorage.removeItem(USER_API_KEY_STORAGE);
+  }
+};
 
 // --- Project Management ---
 
@@ -46,7 +61,6 @@ export const updateProjectName = async (id: string, newName: string) => {
 
 export const saveProjectData = async (id: string, nodes: Node[], edges: Edge[]) => {
   try {
-    // 1. Save the actual graph data
     const cleanNodes = nodes.map(n => {
       const { onChange, onDelete, onRun, onAddNext, onEdit, onRunGroup, onUngroup, onCreateWorkflow, ...serializableData } = n.data || {};
       return { ...n, data: serializableData };
@@ -54,7 +68,6 @@ export const saveProjectData = async (id: string, nodes: Node[], edges: Edge[]) 
     
     await set(`project_data_${id}`, { nodes: cleanNodes, edges });
 
-    // 2. Update Metadata (last modified)
     const projects = await getProjects();
     const index = projects.findIndex(p => p.id === id);
     if (index !== -1) {
@@ -87,7 +100,6 @@ export const addToHistory = async (item: Omit<HistoryItem, 'id' | 'timestamp'>) 
       id: `hist_${Date.now()}`,
       timestamp: Date.now(),
     };
-    // Keep last 100 images to prevent storage bloat
     const updatedHistory = [newItem, ...history].slice(0, 100);
     await set(HISTORY_KEY, updatedHistory);
   } catch (e) {
@@ -105,11 +117,8 @@ export const saveWorkflowTemplate = async (template: Omit<WorkflowTemplate, 'id'
     try {
         const library = (await get<WorkflowTemplate[]>(WORKFLOWS_LIBRARY_KEY)) || [];
         
-        // Clean nodes before saving
         const cleanNodes = template.nodes.map(n => {
             const { onChange, onDelete, onRun, onAddNext, onEdit, onRunGroup, onUngroup, onCreateWorkflow, ...serializableData } = n.data || {};
-            // Reset IDs to be relative or distinct if needed, but for templates, keeping structure is key.
-            // We might handle ID re-generation on import.
             return { ...n, data: serializableData };
         });
 
@@ -137,10 +146,7 @@ export const deleteWorkflowTemplate = async (id: string) => {
     await set(WORKFLOWS_LIBRARY_KEY, updated);
 };
 
-
-// Legacy support (optional helper to migrate old single-file save if needed, skipped for brevity)
 export const clearWorkflow = async () => {
-    // Clears everything
     await del(PROJECTS_INDEX_KEY);
     await del(HISTORY_KEY);
     await del(WORKFLOWS_LIBRARY_KEY);

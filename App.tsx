@@ -2,13 +2,15 @@ import React, { useState } from 'react';
 import { NodeEditor } from './components/Canvas/NodeEditor';
 import { Dashboard } from './components/Dashboard';
 import { Gallery } from './components/Gallery';
-import { Layers, Image, Layout, Home } from 'lucide-react';
+import { SettingsModal } from './components/SettingsModal';
+import { Layers, Image, Layout, Home, Settings as SettingsIcon } from 'lucide-react';
 
 type View = 'home' | 'editor' | 'gallery';
 
 const App: React.FC = () => {
   const [view, setView] = useState<View>('home');
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   const navigateToEditor = (projectId: string) => {
     setCurrentProjectId(projectId);
@@ -23,6 +25,8 @@ const App: React.FC = () => {
   return (
     <div className="flex flex-col h-screen bg-black text-white overflow-hidden font-sans">
       
+      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+
       {/* Global Navigation Bar */}
       <nav className="h-16 border-b border-white/5 bg-[#18181b] flex items-center justify-between px-6 shrink-0 z-50">
          <div className="flex items-center gap-2 cursor-pointer" onClick={navigateHome}>
@@ -47,7 +51,6 @@ const App: React.FC = () => {
                 <Image size={14} />
                 Gallery
              </button>
-             {/* Workspace tab is only active when a project is loaded, but we can show it as disabled or a general link */}
              <button 
                 onClick={() => { if(currentProjectId) setView('editor'); else alert("Please select or create a project from Home first."); }}
                 className={`flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-medium transition-all ${view === 'editor' ? 'bg-blue-600 text-white shadow' : 'text-zinc-500 hover:text-zinc-300'}`}
@@ -57,7 +60,14 @@ const App: React.FC = () => {
              </button>
          </div>
 
-         <div className="flex items-center gap-4">
+         <div className="flex items-center gap-3">
+             <button 
+               onClick={() => setIsSettingsOpen(true)}
+               className="p-2 hover:bg-zinc-800 rounded-full text-zinc-400 hover:text-white transition-colors"
+               title="Settings"
+             >
+               <SettingsIcon size={20} />
+             </button>
              <div className="w-8 h-8 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 ring-2 ring-black cursor-pointer" />
          </div>
       </nav>
@@ -73,7 +83,11 @@ const App: React.FC = () => {
         )}
 
         {view === 'editor' && currentProjectId && (
-           <NodeEditor projectId={currentProjectId} onBack={navigateHome} />
+           <NodeEditor 
+            projectId={currentProjectId} 
+            onBack={navigateHome} 
+            onOpenSettings={() => setIsSettingsOpen(true)}
+           />
         )}
       </main>
     </div>
