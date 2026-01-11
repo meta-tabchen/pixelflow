@@ -4,55 +4,80 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PixelFlow</title>
+    <link rel="icon" type="image/png" href="/Gemini_240.png" />
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://esm.sh/reactflow@11.10.1/dist/style.css" />
     <style>
-      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap');
       
       body {
         font-family: 'Inter', sans-serif;
+        background-color: #000;
+      }
+
+      /* Tech Background Grid */
+      .bg-tech-grid {
+        background-size: 50px 50px;
+        background-image: linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+                          linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+        mask-image: radial-gradient(ellipse at center, black 50%, transparent 100%);
+        -webkit-mask-image: radial-gradient(ellipse at center, black 50%, transparent 100%);
+        pointer-events: none;
       }
 
       /* Custom Scrollbar */
       ::-webkit-scrollbar {
-        width: 6px;
-        height: 6px;
+        width: 4px;
+        height: 4px;
       }
       ::-webkit-scrollbar-track {
         background: transparent;
       }
       ::-webkit-scrollbar-thumb {
-        background: #27272a;
-        border-radius: 10px;
+        background: #3f3f46;
+        border-radius: 4px;
       }
       ::-webkit-scrollbar-thumb:hover {
-        background: #3f3f46;
+        background: #52525b;
+      }
+
+      /* Selection */
+      ::selection {
+        background: rgba(59, 130, 246, 0.3);
+        color: white;
       }
 
       /* React Flow Customizations */
       .react-flow__node {
-        border-radius: 20px;
+        border-radius: 24px;
       }
       .react-flow__handle {
-        width: 8px;
-        height: 8px;
-        background: #3f3f46;
-        border: 2px solid #18181b;
+        width: 10px;
+        height: 10px;
+        background: #27272a;
+        border: 2px solid #52525b;
+        transition: all 0.2s ease;
       }
       .react-flow__handle:hover {
         background: #3b82f6;
+        border-color: #60a5fa;
         transform: scale(1.2);
+        box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
       }
       .react-flow__attribution {
         display: none !important;
       }
+      
+      /* Utilities */
+      .glass-panel {
+        background: rgba(24, 24, 27, 0.6);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
 
-      /* Glassmorphism */
-      .glass {
-        background: rgba(24, 24, 27, 0.7);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
-        border: 1px solid rgba(255, 255, 255, 0.05);
+      .font-mono {
+        font-family: 'JetBrains Mono', monospace;
       }
     </style>
   <script type="importmap">
@@ -70,7 +95,7 @@
 }
 </script>
 </head>
-  <body class="bg-zinc-950 text-zinc-200 antialiased overflow-hidden">
+  <body class="bg-black text-zinc-200 antialiased overflow-hidden">
     <div id="root" class="h-screen w-screen flex flex-col"></div>
     <script type="module" src="/index.tsx"></script>
   </body>

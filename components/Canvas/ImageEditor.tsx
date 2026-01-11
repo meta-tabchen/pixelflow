@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef, useState } from 'react';
 import { fabric } from 'fabric';
 import { X, Save, Undo, Redo, Pen, Eraser } from 'lucide-react';
@@ -78,7 +79,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ isOpen, imageUrl, onCl
   if (!isOpen || !imageUrl) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-[#18181b] border border-zinc-700 rounded-2xl shadow-2xl flex flex-col max-w-[95vw] max-h-[95vh] overflow-hidden">
         
         {/* Header */}

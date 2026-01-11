@@ -1,3 +1,4 @@
+
 import React from 'react';
 
 export enum NodeType {
@@ -72,7 +73,7 @@ export interface GenerateImageParams {
   image?: string;
   images?: string[];
   model: GeneratorModel;
-  aspectRatio?: "1:1" | "16:9" | "9:16" | "4:3" | "3:4";
+  aspectRatio?: string; // Updated to string to support all ratios like "21:9", "2:3" etc.
   imageSize?: "1K" | "2K" | "4K";
   camera?: string; // New Camera parameter for API
 }
