@@ -3,42 +3,56 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>pixelflow</title>
+    <title>PixelFlow</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://esm.sh/reactflow@11.10.1/dist/style.css" />
     <style>
-      /* Custom Scrollbar for dark theme */
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+      
+      body {
+        font-family: 'Inter', sans-serif;
+      }
+
+      /* Custom Scrollbar */
       ::-webkit-scrollbar {
-        width: 8px;
-        height: 8px;
+        width: 6px;
+        height: 6px;
       }
       ::-webkit-scrollbar-track {
-        background: #0f172a;
+        background: transparent;
       }
       ::-webkit-scrollbar-thumb {
-        background: #334155;
-        border-radius: 4px;
+        background: #27272a;
+        border-radius: 10px;
       }
       ::-webkit-scrollbar-thumb:hover {
-        background: #475569;
+        background: #3f3f46;
       }
+
       /* React Flow Customizations */
       .react-flow__node {
-        border-radius: 12px;
+        border-radius: 20px;
       }
       .react-flow__handle {
-        width: 10px;
-        height: 10px;
-        background: #475569;
-        border: 2px solid #94a3b8;
+        width: 8px;
+        height: 8px;
+        background: #3f3f46;
+        border: 2px solid #18181b;
       }
       .react-flow__handle:hover {
         background: #3b82f6;
-        border-color: #60a5fa;
+        transform: scale(1.2);
       }
       .react-flow__attribution {
-        background: transparent !important;
-        color: #475569 !important;
+        display: none !important;
+      }
+
+      /* Glassmorphism */
+      .glass {
+        background: rgba(24, 24, 27, 0.7);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 255, 255, 0.05);
       }
     </style>
   <script type="importmap">
@@ -56,8 +70,8 @@
 }
 </script>
 </head>
-  <body class="bg-gray-950 text-slate-200 antialiased overflow-hidden">
+  <body class="bg-zinc-950 text-zinc-200 antialiased overflow-hidden">
     <div id="root" class="h-screen w-screen flex flex-col"></div>
-     <script type="module" src="/index.tsx"></script>
+    <script type="module" src="/index.tsx"></script>
   </body>
 </html>

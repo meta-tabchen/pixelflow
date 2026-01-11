@@ -1,3 +1,4 @@
+
 import React, { useCallback, useState, useEffect, useRef } from 'react';
 import ReactFlow, { 
   Background, 
@@ -16,7 +17,8 @@ import ReactFlow, {
   useReactFlow,
   OnSelectionChangeParams
 } from 'reactflow';
-import { NodeType, GeneratorModel, HistoryItem, ProjectMeta, WorkflowTemplate } from '../../types';
+// Added NodeData to the imported types to fix property access errors on node.data
+import { NodeType, GeneratorModel, HistoryItem, ProjectMeta, WorkflowTemplate, NodeData } from '../../types';
 import { nodeTypes } from './CustomNodes';
 import { DeletableEdge } from './CustomEdges';
 import { 
@@ -60,12 +62,12 @@ interface NodeEditorProps {
 }
 
 export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpenSettings }) => {
-  // React Flow State
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  // React Flow State - Added NodeData generic to useNodesState to fix type errors when accessing data
+  const [nodes, setNodes, onNodesChange] = useNodesState<NodeData>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   
-  // Selection State
-  const [selectedNodes, setSelectedNodes] = useState<Node[]>([]);
+  // Selection State - Explicitly typed to Node<NodeData>[]
+  const [selectedNodes, setSelectedNodes] = useState<Node<NodeData>[]>([]);
 
   // Refs for Access inside Async Functions
   const nodesRef = useRef(nodes);
@@ -103,16 +105,16 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
       if(currentProject) setProjectName(currentProject.name);
 
       if (savedNodes && savedNodes.length > 0) {
-        setNodes(savedNodes);
+        setNodes(savedNodes as Node<NodeData>[]);
         setEdges(savedEdges || []);
       } else {
-         const defaultNode: Node = { 
+         const defaultNode: Node<NodeData> = { 
             id: 'gen-1', 
             type: NodeType.GEN_IMAGE, 
             position: { x: window.innerWidth / 2 - 190, y: window.innerHeight / 2 - 150 }, 
             data: { 
-            text: "A futuristic cyberpunk city with neon lights, realistic, 8k",
-            params: { model: GeneratorModel.GEMINI_FLASH_IMAGE, aspectRatio: "16:9", imageSize: "1K" }
+              text: "A futuristic cyberpunk city with neon lights, realistic, 8k",
+              params: { model: GeneratorModel.GEMINI_FLASH_IMAGE, aspectRatio: "16:9", imageSize: "1K" }
             } 
         };
         setNodes([defaultNode]);
@@ -144,21 +146,31 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
   };
 
   const onSelectionChange = useCallback(({ nodes }: OnSelectionChangeParams) => {
-     setSelectedNodes(nodes);
+     setSelectedNodes(nodes as Node<NodeData>[]);
   }, []);
 
   const onConnect = useCallback((params: Connection) => {
     setEdges((eds) => addEdge({ ...params, type: 'deletable' }, eds));
   }, [setEdges]);
 
-  const updateNodeData = useCallback((id: string, newData: any) => {
+  // Fixed updateNodeData to handle newData as Partial<NodeData> correctly
+  const updateNodeData = useCallback((id: string, newData: Partial<NodeData>) => {
     setNodes((nds) => 
       nds.map((node) => {
         if (node.id === id) {
-          if (newData.params && node.data.params) {
-             return { ...node, data: { ...node.data, ...newData, params: { ...node.data.params, ...newData.params } } };
+          const existingData = node.data;
+          // Ensure nested params are merged correctly
+          if (newData.params && existingData.params) {
+             return { 
+               ...node, 
+               data: { 
+                 ...existingData, 
+                 ...newData, 
+                 params: { ...existingData.params, ...newData.params } 
+               } 
+             };
           }
-          return { ...node, data: { ...node.data, ...newData } };
+          return { ...node, data: { ...existingData, ...newData } };
         }
         return node;
       })
@@ -196,7 +208,7 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
 
         const inheritedParams = sourceNode.data.params ? { ...sourceNode.data.params } : { model: GeneratorModel.GEMINI_FLASH_IMAGE, aspectRatio: "16:9", imageSize: "1K" };
 
-        const newNode: Node = {
+        const newNode: Node<NodeData> = {
             id: newId,
             type: NodeType.GEN_IMAGE,
             position: newPos,
@@ -222,7 +234,6 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
   // --- Execution Engine ---
 
   const executeNode = async (id: string, overrides?: Map<string, any>) => {
-    // Check if we can even run (Demo mode check)
     if (isKeyRequired()) {
         if (confirm("The current system key is for demonstration only. Image generation is disabled.\n\nWould you like to open Settings to provide your own Gemini API Key?")) {
             onOpenSettings?.();
@@ -336,7 +347,7 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
     const padding = 40; 
     
     const groupId = `group-${Date.now()}`;
-    const groupNode: Node = {
+    const groupNode: Node<NodeData> = {
       id: groupId,
       type: NodeType.GROUP,
       position: { x: rect.x - padding, y: rect.y - padding },
@@ -468,7 +479,7 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
   }, []);
 
   const handleSaveModalConfirm = async (data: { name: string; description: string; tags: string[] }) => {
-     const nodesToSaveSet = new Set<Node>(selectedNodes.length > 0 ? selectedNodes : nodes);
+     const nodesToSaveSet = new Set<Node<NodeData>>(selectedNodes.length > 0 ? selectedNodes : (nodes as Node<NodeData>[]));
      
      if (nodesToSaveSet.size === 0) {
          alert("No nodes to save!");
@@ -480,8 +491,8 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
      while(changed) {
          changed = false;
          currentNodes.forEach(node => {
-             if (!nodesToSaveSet.has(node) && node.parentNode && Array.from(nodesToSaveSet).some(p => p.id === node.parentNode)) {
-                 nodesToSaveSet.add(node);
+             if (!nodesToSaveSet.has(node as Node<NodeData>) && node.parentNode && Array.from(nodesToSaveSet).some(p => p.id === node.parentNode)) {
+                 nodesToSaveSet.add(node as Node<NodeData>);
                  changed = true;
              }
          });
@@ -495,7 +506,7 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
          name: data.name,
          description: data.description,
          tags: data.tags,
-         nodes: nodesToSave as unknown as import('../../types').Node[],
+         nodes: nodesToSave as any,
          edges: edgesToSave
      };
 
@@ -514,7 +525,7 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
       const centerY = window.innerHeight / 2 - 150;
       const offset = Math.random() * 50;
 
-      const newNode: Node = {
+      const newNode: Node<NodeData> = {
         id: `hist-img-${Date.now()}`,
         type: NodeType.INPUT_IMAGE, 
         position: { x: centerX + offset, y: centerY + offset },
@@ -531,7 +542,7 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
       const centerX = window.innerWidth / 2;
       const centerY = window.innerHeight / 2;
 
-      const templateNodes = template.nodes as unknown as Node[];
+      const templateNodes = template.nodes as unknown as Node<NodeData>[];
       const rootNodes = templateNodes.filter(n => !n.parentNode || !templateNodes.find(p => p.id === n.parentNode));
       const rect = getRectOfNodes(rootNodes.length > 0 ? rootNodes : templateNodes);
       
@@ -544,7 +555,8 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
           idMap.set(n.id, newId);
       });
 
-      const newNodes = templateNodes.map(n => {
+      // Fixed type casting for newNodes to prevent ConcatArray error
+      const newNodes: Node<NodeData>[] = templateNodes.map(n => {
           const newId = idMap.get(n.id)!;
           let newParentNode = n.parentNode;
           let isChildOfImportedGroup = false;
@@ -565,7 +577,8 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
               ...n,
               id: newId,
               parentNode: newParentNode,
-              extent: newParentNode ? 'parent' : undefined,
+              // Fixed type casting for 'extent'
+              extent: (newParentNode ? 'parent' : undefined) as 'parent' | undefined,
               position: position,
               selected: true,
               data: { ...n.data } 
@@ -612,7 +625,7 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
     const centerY = window.innerHeight / 2 - 100;
 
     const id = `${type}-${Date.now()}`;
-    const newNode: Node = {
+    const newNode: Node<NodeData> = {
       id,
       type,
       position: { x: centerX + Math.random() * 50, y: centerY + Math.random() * 50 },
@@ -636,13 +649,14 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
                     const sourceNode = nds.find(n => n.id === editingSourceNodeId);
                     if (!sourceNode) return nds;
                     const newId = `${NodeType.INPUT_IMAGE}-${Date.now()}`;
-                    const newNode: Node = {
+                    const newNode: Node<NodeData> = {
                         id: newId,
                         type: NodeType.INPUT_IMAGE,
                         position: { x: sourceNode.position.x + 400, y: sourceNode.position.y },
                         data: { title: "Annotated Image", image: img.split(',')[1], preview: img }
                     };
-                    setEdges((eds) => addEdge({ source: editingSourceNodeId!, target: newId, type: 'deletable', animated: true }, eds));
+                    // Fixed addEdge call by providing a unique id to the new edge object
+                    setEdges((eds) => addEdge({ id: `e-${editingSourceNodeId}-${newId}`, source: editingSourceNodeId!, target: newId, type: 'deletable', animated: true }, eds));
                     return [...nds, newNode];
                 });
                 setIsEditorOpen(false);

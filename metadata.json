@@ -1,5 +1,5 @@
 {
-  "name": "pixelflow",
+  "name": "PixelFlow",
   "description": "A professional AI visual creation engine featuring a node-based workflow and rapid generation tools using Gemini 3 and Imagen models.",
   "requestFramePermissions": []
 }
