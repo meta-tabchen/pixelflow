@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>pixelflow</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://esm.sh/reactflow@11.10.1/dist/style.css" />
+    <style>
+      /* Custom Scrollbar for dark theme */
+      ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: #0f172a;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #334155;
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #475569;
+      }
+      /* React Flow Customizations */
+      .react-flow__node {
+        border-radius: 12px;
+      }
+      .react-flow__handle {
+        width: 10px;
+        height: 10px;
+        background: #475569;
+        border: 2px solid #94a3b8;
+      }
+      .react-flow__handle:hover {
+        background: #3b82f6;
+        border-color: #60a5fa;
+      }
+      .react-flow__attribution {
+        background: transparent !important;
+        color: #475569 !important;
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "@google/genai": "https://esm.sh/@google/genai@^1.35.0",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
+    "reactflow": "https://esm.sh/reactflow@11.10.1",
+    "fabric": "https://esm.sh/fabric@5.3.0",
+    "idb-keyval": "https://esm.sh/idb-keyval@6"
+  }
+}
+</script>
+</head>
+  <body class="bg-gray-950 text-slate-200 antialiased overflow-hidden">
+    <div id="root" class="h-screen w-screen flex flex-col"></div>
+  </body>
+</html>
