@@ -1,16 +1,20 @@
+
 import React, { useState } from 'react';
 import { NodeEditor } from './components/Canvas/NodeEditor';
 import { Dashboard } from './components/Dashboard';
 import { Gallery } from './components/Gallery';
+import { Documentation } from './components/Documentation';
+import { ProjectList } from './components/ProjectList';
 import { SettingsModal } from './components/SettingsModal';
-import { Layers, Image, Layout, Home, Settings as SettingsIcon } from 'lucide-react';
+import { Layers, Image, Layout, Home, Settings as SettingsIcon, BookOpen, Zap, FolderOpen } from 'lucide-react';
 
-type View = 'home' | 'editor' | 'gallery';
+type View = 'home' | 'editor' | 'gallery' | 'docs' | 'projects';
 
 const App: React.FC = () => {
   const [view, setView] = useState<View>('home');
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [logoError, setLogoError] = useState(false);
 
   const navigateToEditor = (projectId: string) => {
     setCurrentProjectId(projectId);
@@ -34,15 +38,22 @@ const App: React.FC = () => {
 
       <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
 
-      {/* Global Navigation Bar - Only visible in Home/Gallery views */}
+      {/* Global Navigation Bar - Only visible in Home/Gallery/Docs views */}
       {view !== 'editor' && (
         <nav className="fixed top-4 left-4 right-4 h-16 glass-panel rounded-2xl flex items-center justify-between px-6 shrink-0 z-50 shadow-2xl shadow-black/50">
            <div className="flex items-center gap-3 cursor-pointer group" onClick={navigateHome}>
-              <img 
-                 src="/Gemini_240.png" 
-                 alt="PixelFlow Logo" 
-                 className="w-8 h-8 object-contain drop-shadow-md group-hover:scale-110 transition-transform duration-300" 
-              />
+              {!logoError ? (
+                  <img 
+                    src="/Gemini_240.png" 
+                    alt="PixelFlow"
+                    onError={() => setLogoError(true)}
+                    className="w-8 h-8 rounded-xl object-contain bg-zinc-900/50 border border-white/10 shadow-lg shadow-blue-500/30 group-hover:scale-110 transition-transform duration-300"
+                  />
+              ) : (
+                  <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/30 border border-white/10 group-hover:scale-110 transition-transform duration-300">
+                      <span className="font-bold text-white text-lg leading-none font-sans pt-0.5">P</span>
+                  </div>
+              )}
               <div className="flex flex-col leading-none">
                   <span className="font-bold text-lg tracking-tight text-white">
                       Pixel<span className="text-blue-500">Flow</span>
@@ -60,6 +71,13 @@ const App: React.FC = () => {
                   Home
                </button>
                <button 
+                  onClick={() => setView('projects')}
+                  className={`flex items-center gap-2 px-6 py-2 rounded-lg text-xs font-bold uppercase tracking-wide transition-all duration-300 ${view === 'projects' ? 'bg-zinc-800 text-white shadow-lg border border-white/5' : 'text-zinc-500 hover:text-white hover:bg-zinc-800/50'}`}
+               >
+                  <FolderOpen size={14} />
+                  Projects
+               </button>
+               <button 
                   onClick={() => setView('gallery')}
                   className={`flex items-center gap-2 px-6 py-2 rounded-lg text-xs font-bold uppercase tracking-wide transition-all duration-300 ${view === 'gallery' ? 'bg-zinc-800 text-white shadow-lg border border-white/5' : 'text-zinc-500 hover:text-white hover:bg-zinc-800/50'}`}
                >
@@ -67,7 +85,14 @@ const App: React.FC = () => {
                   Gallery
                </button>
                <button 
-                  onClick={() => { if(currentProjectId) setView('editor'); else alert("Please select or create a project from Home first."); }}
+                  onClick={() => setView('docs')}
+                  className={`flex items-center gap-2 px-6 py-2 rounded-lg text-xs font-bold uppercase tracking-wide transition-all duration-300 ${view === 'docs' ? 'bg-zinc-800 text-white shadow-lg border border-white/5' : 'text-zinc-500 hover:text-white hover:bg-zinc-800/50'}`}
+               >
+                  <BookOpen size={14} />
+                  Docs
+               </button>
+               <button 
+                  onClick={() => { if(currentProjectId) setView('editor'); else alert("Please select or create a project from the Projects list first."); }}
                   className="flex items-center gap-2 px-6 py-2 rounded-lg text-xs font-bold uppercase tracking-wide transition-all duration-300 text-zinc-500 hover:text-white hover:bg-zinc-800/50"
                >
                   <Layout size={14} />
@@ -95,11 +120,19 @@ const App: React.FC = () => {
       {/* Main Content Area */}
       <main className={`flex-1 relative overflow-hidden w-full h-full z-10 ${view !== 'editor' ? 'pt-24' : ''}`}>
         {view === 'home' && (
-           <Dashboard onOpenProject={navigateToEditor} />
+           <Dashboard onOpenProject={navigateToEditor} onOpenDocs={() => setView('docs')} />
+        )}
+        
+        {view === 'projects' && (
+           <ProjectList onOpenProject={navigateToEditor} />
         )}
 
         {view === 'gallery' && (
            <Gallery />
+        )}
+        
+        {view === 'docs' && (
+           <Documentation />
         )}
 
         {view === 'editor' && currentProjectId && (

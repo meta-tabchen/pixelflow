@@ -2,7 +2,7 @@
 import React, { useRef, memo, useState, useEffect, useMemo } from 'react';
 import { Handle, Position, NodeProps, useUpdateNodeInternals, NodeToolbar } from 'reactflow';
 import { Node, NodeType, GeneratorModel } from '../../types';
-import { X, Play, Image as ImageIcon, Type, Settings, Maximize2, Loader2, Sparkles, Upload, Video, Layers, Film, Plus, Wand2, ChevronDown, Maximize, Ratio, ArrowUp, Download, Zap, Camera, ScanLine, Pencil, Trash2, CloudUpload, BoxSelect, FolderPlus, Ungroup, LayoutGrid, Circle, Workflow, Aperture, User, ArrowRight, ArrowLeft, RotateCcw, Clock, Move, ZoomIn, Eye, ArrowDown, ScanFace, Mountain, Monitor, LocateFixed, Activity, Target, Contact, ScanEye, Plane, Footprints, Users, Glasses, Smartphone, Vibrate, ArrowUpDown, ArrowLeftRight, AlertCircle, ChevronsUpDown, Cpu, Save } from 'lucide-react';
+import { X, Play, Image as ImageIcon, Type, Settings, Maximize2, Loader2, Sparkles, Upload, Video, Layers, Film, Plus, Wand2, ChevronDown, Maximize, Ratio, ArrowUp, Download, Zap, Camera, ScanLine, Pencil, Trash2, CloudUpload, BoxSelect, FolderPlus, Ungroup, LayoutGrid, Circle, Workflow, Aperture, User, ArrowRight, ArrowLeft, RotateCcw, Clock, Move, ZoomIn, Eye, ArrowDown, ScanFace, Mountain, Monitor, LocateFixed, Activity, Target, Contact, ScanEye, Plane, Footprints, Users, Glasses, Smartphone, Vibrate, ArrowUpDown, ArrowLeftRight, AlertCircle, ChevronsUpDown, Cpu, Save, Palette, Star } from 'lucide-react';
 import { optimizePrompt } from '../../services/geminiService';
 
 // --- Shared Styles ---
@@ -52,11 +52,14 @@ const CAMERA_OPTS = {
 const ASPECT_RATIOS = ["1:1","2:3","3:2","3:4","4:3","4:5","5:4","9:16","16:9","21:9"];
 
 const SLASH_COMMANDS = [
-    { id: '9grid', label: '9-Grid Multiview', desc: 'Generate 9 different angles from keyframe.', value: 'Split screen 9 grid view, different camera angles, cinematic storyboard, character reference sheet, 8k', icon: Video },
-    { id: 'lighting', label: 'Cinema Lighting', desc: 'Apply dramatic volumetric lighting.', value: 'Cinematic lighting, volumetric fog, dramatic atmosphere, color graded, raytracing, 8k', icon: Zap },
-    { id: 'char_sheet', label: 'Character Sheet', desc: 'Front, side, and back views.', value: 'Character reference sheet, front view, side view, back view, neutral background, concept art', icon: User },
-    { id: 'next_3s', label: 'Next Frame (+3s)', desc: 'Predict scene 3 seconds later.', value: 'Sequence of events, 3 seconds later, narrative progression, next frame', icon: ArrowRight },
-    { id: 'prev_5s', label: 'Prev Frame (-5s)', desc: 'Predict scene 5 seconds before.', value: 'Sequence of events, 5 seconds before, prequel context, previous frame', icon: RotateCcw },
+    { id: 'photo', label: 'Photorealism', desc: 'Hyper-realistic photography style.', value: 'Photorealistic, hyper-realistic, 8k resolution, sharp focus, raw photo, highly detailed, ray tracing', icon: Aperture },
+    { id: 'cinema', label: 'Cinematic', desc: 'Movie-like lighting and atmosphere.', value: 'Cinematic lighting, dramatic atmosphere, volumetric fog, color graded, 8k, movie scene, widescreen', icon: Film },
+    { id: 'char', label: 'Character Sheet', desc: 'Front, side, and back views.', value: 'Character reference sheet, front view, side view, back view, neutral background, concept art, consistency', icon: Users },
+    { id: 'cyber', label: 'Cyberpunk', desc: 'Futuristic neon aesthetic.', value: 'Cyberpunk style, neon lights, futuristic city, high tech, dystopian, vibrant colors, night', icon: Zap },
+    { id: 'anime', label: 'Anime Style', desc: 'Vibrant Japanese animation style.', value: 'Anime style, highly detailed, vibrant colors, cel shaded, studio ghibli inspired, 4k', icon: Star },
+    { id: 'studio', label: 'Studio Portrait', desc: 'Professional lighting setup.', value: 'Professional studio portrait, rim lighting, softbox, 4k, sharp focus on eyes, bokeh', icon: User },
+    { id: 'oil', label: 'Oil Painting', desc: 'Classical textured art.', value: 'Oil painting, thick brushstrokes, textured canvas, classical art style, masterpiece', icon: Palette },
+    { id: 'story', label: 'Storyboard', desc: '9-grid narrative sequence.', value: 'Split screen 9 grid view, different camera angles, cinematic storyboard, narrative sequence', icon: LayoutGrid },
 ];
 
 // --- Reusable UI Components ---
@@ -282,8 +285,8 @@ const GenImageNode = ({ data, selected, id }: NodeProps) => {
      return CARD_HOVER_BORDER;
   }, [isGenerating, hasError, selected]);
 
-  // We use a containing div without overflow-hidden for the main node to allow handles to pop out,
-  // and an inner div with overflow-hidden for the rounded look.
+  const showTopSection = hasResult || isGenerating || hasError;
+
   return (
     <div className={`relative group/node ${CARD_BG} ${CARD_BORDER} border ${CARD_RADIUS} w-[400px] shadow-2xl transition-all duration-300 ${statusStyles} overflow-visible`}>
       
@@ -324,13 +327,12 @@ const GenImageNode = ({ data, selected, id }: NodeProps) => {
             </div>
       )}
 
-      {/* Inner Container for Content */}
-      <div className={`w-full h-full overflow-hidden ${CARD_RADIUS} flex flex-col`}>
-        {/* Removed Header Stripe to fix visual artifact */}
+      {/* Inner Container for Content - Removed overflow-hidden to allow popups */}
+      <div className={`w-full h-full flex flex-col`}>
         
-        {(hasResult || isGenerating || hasError) && (
+        {showTopSection && (
             <div 
-                className={`relative w-full border-b ${isCollapsed ? 'border-transparent' : 'border-white/5'} bg-black/50 ${isGenerating || hasError ? 'aspect-video' : ''} ${isCollapsed ? '' : ''} overflow-hidden cursor-pointer group/result`}
+                className={`relative w-full border-b ${isCollapsed ? 'border-transparent' : 'border-white/5'} bg-black/50 ${isGenerating || hasError ? 'aspect-video' : ''} overflow-hidden cursor-pointer group/result rounded-t-[24px] ${isCollapsed ? 'rounded-b-[24px]' : ''}`}
                 onClick={toggleCollapse}
             >
             {isGenerating ? (
@@ -375,7 +377,7 @@ const GenImageNode = ({ data, selected, id }: NodeProps) => {
         )}
 
         {!isCollapsed && (
-            <div className="flex flex-col animate-in fade-in slide-in-from-top-2 duration-300 ease-out p-3 gap-3">
+            <div className={`flex flex-col animate-in fade-in slide-in-from-top-2 duration-300 ease-out p-3 gap-3 ${!showTopSection ? 'rounded-[24px]' : 'rounded-b-[24px]'}`}>
                 <div className="relative group/input">
                     <textarea
                         className="w-full h-24 bg-black/20 border border-white/5 text-sm text-zinc-300 placeholder-zinc-700 rounded-xl resize-none focus:outline-none focus:ring-1 focus:ring-blue-500/50 focus:border-blue-500/50 leading-relaxed p-3 nodrag font-medium transition-all group-hover/input:bg-black/40"
@@ -387,9 +389,9 @@ const GenImageNode = ({ data, selected, id }: NodeProps) => {
                     />
                 
                     {showCommands && (
-                        <div className="absolute bottom-full left-0 w-full mb-2 bg-[#18181b] rounded-xl shadow-2xl overflow-hidden z-[100] animate-in slide-in-from-bottom-2 duration-200 border border-white/10">
+                        <div className="absolute bottom-full left-0 w-full mb-2 bg-[#18181b] rounded-xl shadow-2xl overflow-hidden z-[100] animate-in slide-in-from-bottom-2 duration-200 border border-white/10 ring-1 ring-white/10">
                             <div className="px-3 py-2 border-b border-white/5 bg-white/5">
-                                <span className="text-[9px] font-bold text-blue-400 uppercase tracking-widest">Inject Command</span>
+                                <span className="text-[9px] font-bold text-blue-400 uppercase tracking-widest">Quick Presets</span>
                             </div>
                             <div className="max-h-[200px] overflow-y-auto custom-scrollbar">
                                 {SLASH_COMMANDS.map((cmd, index) => (

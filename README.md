@@ -1,45 +1,49 @@
-# PixelFlow 🎨⚡
 
-**PixelFlow** is a professional-grade AI visual creation engine that reimagines image generation through a node-based workflow. Designed for concept artists, designers, and prompt engineers, it leverages the power of Gemini 3 and Imagen models to turn complex ideas into structured, repeatable creative pipelines.
+# PixelFlow v2.0 🎨⚡
+
+> **Visual Logic Without Boundaries.**
+
+**PixelFlow** is a professional-grade AI visual creation engine that reimagines image generation through a node-based workflow. Designed for concept artists, designers, and prompt engineers, it leverages the power of Google's **Gemini 2.5 Flash** and **Gemini 3 Pro** models to turn complex ideas into structured, repeatable creative pipelines.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![React](https://img.shields.io/badge/React-19-61dafb.svg)
-![Gemini](https://img.shields.io/badge/AI-Gemini_3_Flash/Pro-purple.svg)
+![Status](https://img.shields.io/badge/Status-v2.0_Ready-green.svg)
 
 ---
 
 ## ✨ Key Features
 
-### 🧩 Node-Based Workflow
-Build complex generation chains using a flexible canvas powered by **ReactFlow**. Connect text prompts, image inputs, and generation nodes to create visual logic.
-- **Node Grouping:** Organize your workspace by grouping related nodes.
-- **Topological Execution:** Run entire groups in order, with data flowing from one node to the next.
-- **Import/Export:** Save your best setups as templates in your local Workflow Library.
+### ♾️ Infinite Canvas Architecture
+Break free from linear chat interfaces. Build complex logic chains where data flows visually from one node to another.
+- **Topological Execution:** Run entire node groups in sequence.
+- **Reference Chaining:** Use the output of one generation as the reference input for the next (Image-to-Image).
+- **Group & Organize:** Cluster nodes into logical groups to keep your workspace clean.
 
-### 📸 Camera Director
-The industry-first **Camera Director** panel gives you cinematic control over your generations.
-- **Framing:** Extreme Wide Shot, Close-Up, Macro, and more.
-- **Angles:** Overhead, Bird's Eye, Low Angle, POV.
-- **Motion:** Pan, Tilt, Dolly Zoom, Handheld, Orbit.
+### 🎥 Camera Director
+The industry-first **Camera Director** panel gives you cinematic control over your generations without needing to know technical photography terms.
+- **Framing:** Extreme Wide Shot, Full Body, Close-Up, Macro.
+- **Angles:** High Angle, Low Angle, Overhead, Dutch Tilt.
+- **Motion:** Pan, Dolly Zoom, Handheld, FPV Drone.
 
-### 🪄 Prompt Magic & Slash Commands
-- **Magic Optimize:** Use Gemini 3 to expand simple ideas into detailed, high-fidelity prompts with a single click (Ctrl+1).
-- **Slash Commands:** Quickly inject complex parameters like "Cinematic Lighting" or "9-Grid Storyboard" using the `/` menu.
+### ⚡ Smart Productivity Tools
+- **Slash Commands (`/`):** Instantly inject professional presets like "Cyberpunk", "Photorealism", or "Studio Lighting" directly into your prompt.
+- **Magic Optimize (`Ctrl+1`):** Stuck on a prompt? Let the AI rewrite your simple concept into a highly detailed, artistic description.
+- **Workflow Library:** Save your best node graphs as reusable templates. Share logic between projects.
 
-### 🖼️ Integrated Image Tools
-- **In-Canvas Editing:** Annotate or draw on generated results using the built-in Fabric.js editor.
-- **Vision Analysis:** Use Gemini's multimodal capabilities to describe existing images or extract prompts from visual references.
-- **Gallery & History:** Every generation is automatically saved locally with full metadata (prompt, model, camera settings).
+### 💾 Robust Data Management
+- **Auto-Save:** Your workspace is automatically saved to local storage.
+- **History Gallery:** Every image generated is archived with full metadata (prompt, model, seed, camera settings).
+- **Vision Analysis:** Drag an image into the canvas to have Gemini analyze and describe it for you.
 
 ---
 
 ## 🚀 Tech Stack
 
 - **Frontend:** React 19, TypeScript, Tailwind CSS
-- **Canvas Engine:** ReactFlow
-- **AI Integration:** Google GenAI SDK (Gemini 3 Pro/Flash, Imagen 4)
-- **Image Processing:** Fabric.js
-- **Local Storage:** IndexedDB (via idb-keyval)
+- **Canvas Engine:** ReactFlow 11
+- **AI Integration:** Google GenAI SDK (Gemini 2.5 Flash Image, Gemini 3 Pro Image)
+- **Image Processing:** Fabric.js (In-canvas annotation)
+- **Storage:** IndexedDB (via idb-keyval)
 - **Icons:** Lucide React
 
 ---
@@ -67,6 +71,7 @@ You will need a Google Gemini API Key. Get one at [AI Studio](https://aistudio.g
    ```env
    API_KEY=your_gemini_api_key_here
    ```
+   *Note: Users can also enter their own API key via the Settings UI.*
 
 4. Start the development server:
    ```bash
@@ -77,11 +82,13 @@ You will need a Google Gemini API Key. Get one at [AI Studio](https://aistudio.g
 
 ## 📖 Usage Guide
 
-1. **Creating a Project:** Start from the Dashboard and create a new Canvas.
-2. **Adding Nodes:** Use the floating sidebar to add `Text`, `Generation`, or `Upload` nodes.
-3. **Connecting Logic:** Drag handles to connect a prompt to a generator, or a generator result as a reference for the next one.
-4. **Cinematic Control:** Click the "Camera" button on a generation node to apply specific cinematography styles.
-5. **Execution:** Hit the "Generate" arrow. Watch your workflow resolve in real-time.
+1. **Dashboard:** Start here to manage multiple projects or view your gallery.
+2. **Workspace:**
+   - **Right Click / Sidebar:** Add `Generator`, `Text`, or `Image` nodes.
+   - **Connect:** Drag cables between nodes to define the flow.
+   - **Camera:** Click the camera icon on a Generator node to set the scene.
+   - **Run:** Execute individual nodes or entire groups.
+3. **Editor:** Click the pencil icon on any generated result to annotate or paint over it before using it as a reference for the next step.
 
 ---
 
@@ -99,4 +106,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-Developed with ❤️ by the **pixelflow** team.
+Developed with ❤️ by the **PixelFlow Team**.
