@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { Sparkles, Image as ImageIcon, Type, Wand2, Upload, Loader2, Download } from 'lucide-react';
 import { generateImageContent, imageToText, fileToBase64, optimizePrompt } from '../services/geminiService';
@@ -26,12 +27,15 @@ export const SimpleMode: React.FC = () => {
     setGeneratedImage(null);
     try {
       // Auto-optimize prompt slightly for better results in simple mode
-      const result = await generateImageContent({
+      const results = await generateImageContent({
         prompt,
         model: GeneratorModel.GEMINI_PRO_IMAGE,
-        aspectRatio: "16:9"
+        aspectRatio: "16:9",
+        numberOfImages: 1
       });
-      setGeneratedImage(result);
+      if (results && results.length > 0) {
+          setGeneratedImage(results[0]);
+      }
     } catch (e) {
       alert("Generation failed. Please try again.");
     } finally {

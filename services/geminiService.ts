@@ -1,3 +1,4 @@
+
 import { GoogleGenAI } from "@google/genai";
 import { GeneratorModel, GenerateImageParams } from "../types";
 import { getUserApiKey } from "./storageService";
@@ -57,12 +58,9 @@ export const fileToBase64 = (file: File): Promise<string> => {
   });
 };
 
-export const generateImageContent = async (params: GenerateImageParams): Promise<string> => {
-  if (isKeyRequired()) {
-    throw new Error("DEMO_KEY_RESTRICTION: The current system key is for demonstration only. Please enter your own Gemini API Key in Settings to enable generation.");
-  }
-
-  return withRetry(async () => {
+// Internal function for a single generation request
+// Modified to return an array of strings, as one request might yield multiple images
+const generateSingleImage = async (params: GenerateImageParams): Promise<string[]> => {
     const ai = getAI();
     const parts: any[] = [];
     
@@ -94,6 +92,8 @@ export const generateImageContent = async (params: GenerateImageParams): Promise
     parts.push({ text: finalPrompt });
 
     try {
+      console.log(">>> [GeminiService] Sending Request:", { model: params.model, config: params });
+
       const response = await ai.models.generateContent({
         model: params.model,
         contents: {
@@ -107,12 +107,34 @@ export const generateImageContent = async (params: GenerateImageParams): Promise
         }
       });
 
-      if (response.candidates && response.candidates[0].content.parts) {
-        for (const part of response.candidates[0].content.parts) {
-          if (part.inlineData && part.inlineData.data) {
-            return `data:image/png;base64,${part.inlineData.data}`;
-          }
-        }
+      // --- DEBUG LOGS START ---
+      console.log(">>> [GeminiService] RAW RESPONSE OBJECT:", response);
+      if (response.candidates) {
+        console.log(">>> [GeminiService] Candidates length:", response.candidates.length);
+        response.candidates.forEach((c, i) => {
+            console.log(`>>>Candidate[${i}] content parts:`, c.content?.parts);
+        });
+      }
+      // --- DEBUG LOGS END ---
+
+      const images: string[] = [];
+
+      if (response.candidates) {
+          response.candidates.forEach(candidate => {
+              if (candidate.content && candidate.content.parts) {
+                  candidate.content.parts.forEach(part => {
+                      if (part.inlineData && part.inlineData.data) {
+                          // Use the MIME type from the response if available, default to png
+                          const mimeType = part.inlineData.mimeType || 'image/png';
+                          images.push(`data:${mimeType};base64,${part.inlineData.data}`);
+                      }
+                  });
+              }
+          });
+      }
+      
+      if (images.length > 0) {
+          return images;
       }
       
       throw new Error("No image generated in response");
@@ -121,7 +143,31 @@ export const generateImageContent = async (params: GenerateImageParams): Promise
       console.error("Gemini Image Gen Error:", error);
       throw error;
     }
-  });
+};
+
+export const generateImageContent = async (params: GenerateImageParams): Promise<string[]> => {
+  if (isKeyRequired()) {
+    throw new Error("DEMO_KEY_RESTRICTION: The current system key is for demonstration only. Please enter your own Gemini API Key in Settings to enable generation.");
+  }
+
+  const count = params.numberOfImages || 1;
+  console.log(`>>> [GeminiService] Starting batch generation. Count: ${count}`);
+
+  // Create an array of promises to run in parallel
+  // Each generateSingleImage can now return multiple images
+  const promises = Array.from({ length: count }).map(() => 
+    withRetry(() => generateSingleImage(params))
+  );
+
+  try {
+      const resultsNested = await Promise.all(promises);
+      // Flatten the array of arrays into a single array of strings
+      const results = resultsNested.flat();
+      console.log(">>> [GeminiService] Batch generation complete. Results:", results);
+      return results;
+  } catch (error) {
+      throw error;
+  }
 };
 
 export const optimizePrompt = async (rawPrompt: string): Promise<string> => {

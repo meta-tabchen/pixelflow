@@ -14,24 +14,26 @@ export enum NodeType {
 
 export interface NodeData {
   text?: string;
-  image?: string; // Base64
+  image?: string; // Base64 (Input or Main Selected Output)
   params?: {
     aspectRatio: string;
     model: string;
     imageSize?: string;
-    camera?: string; // New Camera/Shot parameter
+    camera?: string; 
+    numberOfImages?: number; // New: Batch size
   };
-  result?: string; // Base64 or Text
-  error?: string; // New Error Message Field
+  result?: string; // The "Main" selected image passed to next nodes
+  results?: string[]; // New: All generated images in this batch
+  error?: string; 
   isLoading?: boolean;
   preview?: string;
   title?: string;
-  label?: string; // For Group Label
+  label?: string; 
   
   // Actions
   onChange?: (id: string, data: any) => void;
   onDelete?: (id: string) => void;
-  onRun?: (id: string) => Promise<void>; // Updated to Promise for chaining
+  onRun?: (id: string) => Promise<void>; 
   onAddNext?: (id: string) => void;
   onEdit?: (id: string, imageData: string) => void;
   
@@ -43,10 +45,10 @@ export interface NodeData {
 
 export interface Node {
   id: string;
-  type: NodeType | string; // Fix: Allow string for ReactFlow compatibility
+  type: NodeType | string; 
   x?: number;
   y?: number;
-  position: { x: number; y: number }; // Fix: Make position required for ReactFlow compatibility
+  position: { x: number; y: number }; 
   data: NodeData;
   title?: string;
   parentNode?: string;
@@ -73,9 +75,10 @@ export interface GenerateImageParams {
   image?: string;
   images?: string[];
   model: GeneratorModel;
-  aspectRatio?: string; // Updated to string to support all ratios like "21:9", "2:3" etc.
+  aspectRatio?: string; 
   imageSize?: "1K" | "2K" | "4K";
-  camera?: string; // New Camera parameter for API
+  camera?: string; 
+  numberOfImages?: number; // New
 }
 
 // --- New Types for Multi-Project & History ---
@@ -84,7 +87,7 @@ export interface ProjectMeta {
   id: string;
   name: string;
   lastModified: number;
-  thumbnail?: string; // Optional preview of the workflow
+  thumbnail?: string; 
   nodeCount: number;
 }
 
@@ -92,11 +95,11 @@ export interface HistoryItem {
   id: string;
   timestamp: number;
   prompt: string;
-  imageData: string; // Base64
+  imageData: string; 
   model: string;
   aspectRatio: string;
-  camera?: string; // Stored camera parameter
-  referenceImages?: string[]; // Stored reference images used for this generation
+  camera?: string; 
+  referenceImages?: string[]; 
 }
 
 export interface WorkflowTemplate {
@@ -105,6 +108,6 @@ export interface WorkflowTemplate {
     description: string;
     tags: string[];
     nodes: Node[];
-    edges: any[]; // Using any for Edge to avoid circular deps with ReactFlow type if simple
+    edges: any[]; 
     createdAt: number;
 }

@@ -127,7 +127,7 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
             position: { x: window.innerWidth / 2 - 200, y: window.innerHeight / 2 - 150 }, 
             data: { 
               text: "A futuristic cyberpunk city with neon lights, realistic, 8k",
-              params: { model: GeneratorModel.GEMINI_FLASH_IMAGE, aspectRatio: "16:9", imageSize: "1K" }
+              params: { model: GeneratorModel.GEMINI_FLASH_IMAGE, aspectRatio: "16:9", imageSize: "1K", numberOfImages: 1 }
             } 
         };
         setNodes([defaultNode]);
@@ -222,7 +222,7 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
             y: sourceNode.position.y 
         };
 
-        const inheritedParams = sourceNode.data.params ? { ...sourceNode.data.params } : { model: GeneratorModel.GEMINI_FLASH_IMAGE, aspectRatio: "16:9", imageSize: "1K" };
+        const inheritedParams = sourceNode.data.params ? { ...sourceNode.data.params } : { model: GeneratorModel.GEMINI_FLASH_IMAGE, aspectRatio: "16:9", imageSize: "1K", numberOfImages: 1 };
 
         const newNode: Node<NodeData> = {
             id: newId,
@@ -261,13 +261,15 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
     const currentEdges = edgesRef.current;
     
     const node = currentNodes.find(n => n.id === id);
-    if (!node || !node.data.text) return;
+    // Allow empty generator text if we have connected input text nodes
+    if (!node) return;
 
-    updateNodeData(id, { isLoading: true, result: undefined, error: undefined });
+    updateNodeData(id, { isLoading: true, result: undefined, results: undefined, error: undefined });
 
     try {
       const inputEdges = currentEdges.filter(e => e.target === id);
       const collectedImages: string[] = [];
+      const collectedTexts: string[] = [];
 
       if (node.data.image) {
           collectedImages.push(node.data.image);
@@ -284,6 +286,7 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
 
           const sourceNode = currentNodes.find(n => n.id === edge.source);
           if (sourceNode) {
+              // Image Collection
               if (sourceNode.data.result && sourceNode.data.result.startsWith('data:image')) {
                   collectedImages.push(sourceNode.data.result);
               } else if (sourceNode.data.preview) {
@@ -291,26 +294,48 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
               } else if (sourceNode.data.image) {
                    collectedImages.push(sourceNode.data.image);
               }
+
+              // Text Collection
+              if (sourceNode.type === NodeType.INPUT_TEXT && sourceNode.data.text) {
+                  collectedTexts.push(sourceNode.data.text);
+              }
           }
       });
 
+      // Combine prompts: Generator Text + Input Text Nodes
+      const promptParts = [node.data.text, ...collectedTexts].filter(t => t && t.trim().length > 0);
+      
+      if (promptParts.length === 0) {
+          throw new Error("No prompt provided. Please add text to the generator or connect a text node.");
+      }
+
+      const finalPrompt = promptParts.join(", ");
+
       const params = {
-        prompt: node.data.text,
+        prompt: finalPrompt,
         images: collectedImages, 
         model: node.data.params?.model as GeneratorModel || GeneratorModel.GEMINI_FLASH_IMAGE,
         aspectRatio: node.data.params?.aspectRatio as any,
         imageSize: node.data.params?.imageSize as any,
-        camera: node.data.params?.camera
+        camera: node.data.params?.camera,
+        numberOfImages: node.data.params?.numberOfImages || 1
       };
 
-      const resultImage = await generateImageContent(params);
+      const resultImages = await generateImageContent(params);
+      console.log(">>> [NodeEditor] Final Result Images:", resultImages);
+
+      // Store all results, set first as main result
+      updateNodeData(id, { 
+          results: resultImages, 
+          result: resultImages[0], 
+          error: undefined 
+      });
       
-      updateNodeData(id, { result: resultImage, error: undefined });
-      
-      if (resultImage) {
+      if (resultImages.length > 0) {
+          // Add first image to history (or all? keep simple for now)
           addToHistory({
               prompt: params.prompt,
-              imageData: resultImage,
+              imageData: resultImages[0],
               model: params.model,
               aspectRatio: params.aspectRatio || "16:9",
               camera: params.camera,
@@ -321,7 +346,7 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
           }
       }
 
-      return resultImage;
+      return resultImages[0];
 
     } catch (error: any) {
       console.error("Node Generation Error", error);
@@ -335,7 +360,7 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
             errorMessage = "Image generation disabled (Demo Key). Please enter your own key in Settings.";
         }
       }
-      updateNodeData(id, { result: undefined, error: errorMessage }); 
+      updateNodeData(id, { result: undefined, results: undefined, error: errorMessage }); 
       return undefined;
     } finally {
       updateNodeData(id, { isLoading: false });
@@ -648,7 +673,7 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
       type,
       position: { x: centerX + Math.random() * 50, y: centerY + Math.random() * 50 },
       data: { 
-        params: { model: GeneratorModel.GEMINI_FLASH_IMAGE, aspectRatio: "16:9", imageSize: "1K" }
+        params: { model: GeneratorModel.GEMINI_FLASH_IMAGE, aspectRatio: "16:9", imageSize: "1K", numberOfImages: 1 }
       }
     };
     setNodes((nds) => nds.concat(newNode));
@@ -676,7 +701,7 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
                             result: img, // Show as result
                             image: img.split(',')[1], // Store as input for regeneration
                             text: sourceNode.data.text || "Variation of edited image...", 
-                            params: sourceNode.data.params || { model: GeneratorModel.GEMINI_FLASH_IMAGE, aspectRatio: "16:9", imageSize: "1K" }
+                            params: sourceNode.data.params || { model: GeneratorModel.GEMINI_FLASH_IMAGE, aspectRatio: "16:9", imageSize: "1K", numberOfImages: 1 }
                         }
                     };
                     setEdges((eds) => addEdge({ id: `e-${editingSourceNodeId}-${newId}`, source: editingSourceNodeId!, target: newId, type: 'deletable', animated: true, style: { stroke: '#3b82f6', strokeWidth: 2 } }, eds));

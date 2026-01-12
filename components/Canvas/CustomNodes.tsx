@@ -2,7 +2,7 @@
 import React, { useRef, memo, useState, useEffect, useMemo } from 'react';
 import { Handle, Position, NodeProps, useUpdateNodeInternals, NodeToolbar } from 'reactflow';
 import { Node, NodeType, GeneratorModel } from '../../types';
-import { X, Play, Image as ImageIcon, Type, Settings, Maximize2, Loader2, Sparkles, Upload, Video, Layers, Film, Plus, Wand2, ChevronDown, Maximize, Ratio, ArrowUp, Download, Zap, Camera, ScanLine, Pencil, Trash2, CloudUpload, BoxSelect, FolderPlus, Ungroup, LayoutGrid, Circle, Workflow, Aperture, User, ArrowRight, ArrowLeft, RotateCcw, Clock, Move, ZoomIn, Eye, ArrowDown, ScanFace, Mountain, Monitor, LocateFixed, Activity, Target, Contact, ScanEye, Plane, Footprints, Users, Glasses, Smartphone, Vibrate, ArrowUpDown, ArrowLeftRight, AlertCircle, ChevronsUpDown, Cpu, Save, Palette, Star } from 'lucide-react';
+import { X, Play, Image as ImageIcon, Type, Settings, Maximize2, Loader2, Sparkles, Upload, Video, Layers, Film, Plus, Wand2, ChevronDown, Maximize, Ratio, ArrowUp, Download, Zap, Camera, ScanLine, Pencil, Trash2, CloudUpload, BoxSelect, FolderPlus, Ungroup, LayoutGrid, Circle, Workflow, Aperture, User, ArrowRight, ArrowLeft, RotateCcw, Clock, Move, ZoomIn, Eye, ArrowDown, ScanFace, Mountain, Monitor, LocateFixed, Activity, Target, Contact, ScanEye, Plane, Footprints, Users, Glasses, Smartphone, Vibrate, ArrowUpDown, ArrowLeftRight, AlertCircle, ChevronsUpDown, Cpu, Save, Palette, Star, Copy, Check } from 'lucide-react';
 import { optimizePrompt } from '../../services/geminiService';
 
 // --- Shared Styles ---
@@ -170,8 +170,12 @@ const GenImageNode = ({ data, selected, id }: NodeProps) => {
   const isPro = data.params?.model === GeneratorModel.GEMINI_PRO_IMAGE;
   const hasResult = !!data.result;
   const hasError = !!data.error;
+  const allResults = data.results || (data.result ? [data.result] : []);
+  const resultCount = allResults.length;
   
   const [isCollapsed, setIsCollapsed] = useState(!!data.result);
+  const [gridView, setGridView] = useState(false);
+  
   const prevGenerating = useRef(false);
   useEffect(() => {
       if (prevGenerating.current && !isGenerating && hasResult) {
@@ -276,6 +280,14 @@ const GenImageNode = ({ data, selected, id }: NodeProps) => {
   const toggleCollapse = (e: React.MouseEvent) => {
       if (hasResult) setIsCollapsed(!isCollapsed);
   };
+  
+  const handleSelectResult = (e: React.MouseEvent, img: string) => {
+      e.preventDefault(); 
+      e.stopPropagation();
+      // Set as main result and close grid
+      data.onChange?.(id, { result: img });
+      setGridView(false);
+  };
 
   // Border & Shadow Status Styles
   const statusStyles = useMemo(() => {
@@ -296,14 +308,13 @@ const GenImageNode = ({ data, selected, id }: NodeProps) => {
          <NodeTitle title={data.title} onChange={(val) => data.onChange?.(id, { title: val })} placeholder="GENERATION" />
       </div>
 
-      {/* Camera Panel - Rendered Outside Inner Container to Float */}
+      {/* Camera Panel */}
       {showCameraPanel && (
            <div className="absolute bottom-14 -right-12 z-[100] w-[340px] max-h-[400px] overflow-y-auto custom-scrollbar glass-panel bg-black/95 rounded-2xl shadow-2xl p-5 animate-in slide-in-from-bottom-2 fade-in duration-200 flex flex-col gap-5 cursor-default border border-white/10 origin-bottom-right" onMouseDown={e => e.stopPropagation()}>
                 <div className="flex items-center justify-between border-b border-white/5 pb-2">
                     <span className="text-[10px] font-bold tracking-[0.2em] text-zinc-500 uppercase">Camera Control</span>
                     <button onClick={() => data.onChange?.(id, { params: { ...data.params, camera: undefined }})} className="text-[9px] font-mono text-red-400 hover:text-red-300 transition-colors">RESET</button>
                 </div>
-                
                 {Object.entries(CAMERA_OPTS).map(([cat, opts]) => (
                     <div key={cat} className="space-y-2">
                         <span className="text-[9px] font-mono text-blue-500/70 uppercase tracking-widest pl-1">{cat}</span>
@@ -327,7 +338,7 @@ const GenImageNode = ({ data, selected, id }: NodeProps) => {
             </div>
       )}
 
-      {/* Inner Container for Content - Removed overflow-hidden to allow popups */}
+      {/* Inner Container for Content */}
       <div className={`w-full h-full flex flex-col`}>
         
         {showTopSection && (
@@ -357,20 +368,63 @@ const GenImageNode = ({ data, selected, id }: NodeProps) => {
                     <button onClick={() => data.onRun?.(id)} className="px-4 py-1.5 bg-zinc-800 hover:bg-zinc-700 rounded text-[10px] font-bold text-white transition-all uppercase tracking-wide">Retry</button>
                 </div>
             ) : (
-                <div className="relative w-full">
-                <img src={data.result} alt="Generated" className="w-full h-auto block" />
-                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/result:opacity-100 transition-opacity duration-300 flex items-center justify-center backdrop-blur-[2px]">
-                        <div className="flex gap-2 scale-90 group-hover/result:scale-100 transition-transform duration-300">
-                            <button onClick={(e) => { e.stopPropagation(); data.onEdit?.(id, data.result!); }} className="w-10 h-10 flex items-center justify-center bg-white text-black rounded-full shadow-lg hover:bg-blue-500 hover:text-white transition-all"><Pencil size={16} /></button>
-                            <a href={data.result} download="pixel-flow.png" onClick={(e) => e.stopPropagation()} className="w-10 h-10 flex items-center justify-center bg-white text-black rounded-full shadow-lg hover:bg-blue-500 hover:text-white transition-all"><Download size={16} /></a>
+                <div className="relative w-full group/image-area">
+                    {gridView ? (
+                        <div className="w-full max-h-[320px] overflow-y-auto custom-scrollbar bg-zinc-900 p-2 grid grid-cols-2 gap-2" onClick={e => e.stopPropagation()}>
+                            {allResults.map((img, idx) => (
+                                <div 
+                                    key={idx} 
+                                    className={`relative aspect-square rounded-lg overflow-hidden border-2 cursor-pointer group/item ${img === data.result ? 'border-green-500 bg-green-500/10 shadow-[0_0_10px_rgba(34,197,94,0.3)]' : 'border-zinc-700 hover:border-blue-400 bg-black/40'}`}
+                                    onClick={(e) => handleSelectResult(e, img)}
+                                >
+                                    <img src={img} className="w-full h-full object-contain" />
+                                    {img === data.result && (
+                                        <div className="absolute top-1 right-1 w-5 h-5 bg-green-500 rounded-full flex items-center justify-center text-black shadow-sm z-10">
+                                            <Check size={12} strokeWidth={4} />
+                                        </div>
+                                    )}
+                                    <div className="absolute inset-0 hover:bg-white/10 transition-colors pointer-events-none" />
+                                </div>
+                            ))}
+                            <button onClick={(e) => { e.stopPropagation(); setGridView(false); }} className="absolute top-2 right-2 p-1 bg-black/60 text-white rounded-md hover:bg-black/80 hover:text-red-400 z-20 backdrop-blur-sm border border-white/10"><X size={12}/></button>
                         </div>
-                </div>
-                {isCollapsed && (
-                    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/80 backdrop-blur-md px-3 py-1 rounded-full border border-white/10 opacity-0 group-hover/result:opacity-100 transition-all duration-300 translate-y-2 group-hover/result:translate-y-0 pointer-events-none">
-                            <ChevronsUpDown size={10} className="text-blue-400" />
-                            <span className="text-[9px] font-bold tracking-widest uppercase text-white">Expand</span>
-                    </div>
-                )}
+                    ) : (
+                        <>
+                            <img src={data.result} alt="Generated" className="w-full h-auto block" />
+                            
+                            {/* Overlay Controls */}
+                            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/result:opacity-100 transition-opacity duration-300 flex items-center justify-center backdrop-blur-[2px]">
+                                    <div className="flex gap-2 scale-90 group-hover/result:scale-100 transition-transform duration-300">
+                                        <button onClick={(e) => { e.stopPropagation(); data.onEdit?.(id, data.result!); }} className="w-10 h-10 flex items-center justify-center bg-white text-black rounded-full shadow-lg hover:bg-blue-500 hover:text-white transition-all" title="Annotate / Edit"><Pencil size={16} /></button>
+                                        <a href={data.result} download="pixel-flow.png" onClick={(e) => e.stopPropagation()} className="w-10 h-10 flex items-center justify-center bg-white text-black rounded-full shadow-lg hover:bg-blue-500 hover:text-white transition-all" title="Download"><Download size={16} /></a>
+                                        {resultCount > 1 && (
+                                            <button 
+                                                onClick={(e) => { e.stopPropagation(); setGridView(true); }}
+                                                className="w-10 h-10 flex items-center justify-center bg-white text-black rounded-full shadow-lg hover:bg-blue-500 hover:text-white transition-all"
+                                                title="View All Variations"
+                                            >
+                                                <LayoutGrid size={16} />
+                                            </button>
+                                        )}
+                                    </div>
+                            </div>
+
+                            {/* Result Counter Badge */}
+                            {resultCount > 1 && !isCollapsed && (
+                                <div className="absolute bottom-3 right-3 px-2 py-1 bg-black/60 backdrop-blur-md rounded-md border border-white/10 text-[9px] font-bold text-white flex items-center gap-1.5 shadow-lg pointer-events-none">
+                                    <Copy size={10} />
+                                    <span>{allResults.indexOf(data.result!) + 1}/{resultCount}</span>
+                                </div>
+                            )}
+
+                            {isCollapsed && (
+                                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-black/80 backdrop-blur-md px-3 py-1 rounded-full border border-white/10 opacity-0 group-hover/result:opacity-100 transition-all duration-300 translate-y-2 group-hover/result:translate-y-0 pointer-events-none">
+                                        <ChevronsUpDown size={10} className="text-blue-400" />
+                                        <span className="text-[9px] font-bold tracking-widest uppercase text-white">Expand</span>
+                                </div>
+                            )}
+                        </>
+                    )}
                 </div>
             )}
             </div>
@@ -416,6 +470,7 @@ const GenImageNode = ({ data, selected, id }: NodeProps) => {
                 <div className="flex items-center justify-between gap-2">
                     {/* Left: Settings */}
                     <div className="flex items-center gap-1.5 flex-wrap">
+                        {/* Model Selector */}
                         <div className="relative group/model">
                             <button className="flex items-center gap-1.5 hover:text-blue-400 transition-all nodrag text-[9px] font-bold uppercase tracking-wider text-zinc-500 border border-white/5 px-2 py-1 rounded bg-zinc-900/50 hover:bg-zinc-800 h-7">
                                 <Zap size={10} className={isPro ? "text-purple-400 fill-purple-400" : "text-yellow-500 fill-yellow-500"} />
@@ -427,7 +482,8 @@ const GenImageNode = ({ data, selected, id }: NodeProps) => {
                                 <option value={GeneratorModel.GEMINI_PRO_IMAGE}>Pro</option>
                             </select>
                         </div>
-
+                        
+                        {/* Aspect Ratio */}
                         <div className="relative group/aspect">
                             <button className="flex items-center gap-1.5 hover:text-blue-400 transition-all nodrag text-[9px] font-bold uppercase tracking-wider text-zinc-500 border border-white/5 px-2 py-1 rounded bg-zinc-900/50 hover:bg-zinc-800 h-7">
                                 <Ratio size={10} />
@@ -440,6 +496,21 @@ const GenImageNode = ({ data, selected, id }: NodeProps) => {
                             </select>
                         </div>
                         
+                        {/* Count Selector */}
+                        <div className="relative group/count">
+                            <button className="flex items-center gap-1.5 hover:text-blue-400 transition-all nodrag text-[9px] font-bold uppercase tracking-wider text-zinc-500 border border-white/5 px-2 py-1 rounded bg-zinc-900/50 hover:bg-zinc-800 h-7">
+                                <Copy size={10} />
+                                <span>x{data.params?.numberOfImages || 1}</span>
+                            </button>
+                            <select className="absolute inset-0 opacity-0 cursor-pointer nodrag" value={data.params?.numberOfImages || 1} onChange={(e) => data.onChange?.(id, { params: { ...data.params, numberOfImages: parseInt(e.target.value) }})}>
+                                <option value={1}>1 Image</option>
+                                <option value={2}>2 Images</option>
+                                <option value={3}>3 Images</option>
+                                <option value={4}>4 Images</option>
+                            </select>
+                        </div>
+
+                        {/* Resolution */}
                         <div className="relative group/res">
                             <button className={`flex items-center gap-1.5 transition-all nodrag text-[9px] font-bold uppercase tracking-wider border border-white/5 px-2 py-1 rounded h-7 ${data.params?.imageSize === '2K' || data.params?.imageSize === '4K' ? 'text-purple-400 bg-purple-500/10 hover:bg-purple-500/20' : 'text-zinc-500 bg-zinc-900/50 hover:bg-zinc-800 hover:text-blue-400'}`}>
                                 <Monitor size={10} />
