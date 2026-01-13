@@ -507,6 +507,9 @@ const GenImageNode = ({ data, selected, id }: NodeProps) => {
                                 <option value={2}>2 Images</option>
                                 <option value={3}>3 Images</option>
                                 <option value={4}>4 Images</option>
+                                <option value={5}>5 Images</option>
+                                <option value={6}>6 Images</option>
+                                <option value={8}>8 Images</option>
                             </select>
                         </div>
 
