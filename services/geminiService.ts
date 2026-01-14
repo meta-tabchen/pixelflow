@@ -1,5 +1,5 @@
 
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Modality } from "@google/genai";
 import { GeneratorModel, GenerateImageParams } from "../types";
 import { getUserApiKey } from "./storageService";
 
@@ -100,6 +100,7 @@ const generateSingleImage = async (params: GenerateImageParams): Promise<string[
           parts: parts,
         },
         config: {
+          responseModalities: [Modality.TEXT, Modality.IMAGE],
           imageConfig: {
             aspectRatio: params.aspectRatio || "16:9",
             imageSize: params.model === GeneratorModel.GEMINI_PRO_IMAGE ? (params.imageSize || "1K") : undefined
