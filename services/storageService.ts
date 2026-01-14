@@ -97,13 +97,28 @@ export const addToHistory = async (item: Omit<HistoryItem, 'id' | 'timestamp'>) 
     const history = (await get<HistoryItem[]>(HISTORY_KEY)) || [];
     const newItem: HistoryItem = {
       ...item,
-      id: `hist_${Date.now()}`,
+      id: `hist_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
       timestamp: Date.now(),
     };
     const updatedHistory = [newItem, ...history].slice(0, 100);
     await set(HISTORY_KEY, updatedHistory);
   } catch (e) {
     console.error('Failed to save history', e);
+  }
+};
+
+export const addBatchToHistory = async (items: Omit<HistoryItem, 'id' | 'timestamp'>[]) => {
+  try {
+    const history = (await get<HistoryItem[]>(HISTORY_KEY)) || [];
+    const newItems = items.map(item => ({
+      ...item,
+      id: `hist_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+      timestamp: Date.now(),
+    }));
+    const updatedHistory = [...newItems, ...history].slice(0, 100);
+    await set(HISTORY_KEY, updatedHistory);
+  } catch (e) {
+    console.error('Failed to save history batch', e);
   }
 };
 

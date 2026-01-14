@@ -58,7 +58,7 @@ import {
 import { generateImageContent, isKeyRequired } from '../../services/geminiService';
 import { ImageEditor } from './ImageEditor';
 import { WorkflowModal } from './WorkflowModal';
-import { saveProjectData, loadProjectData, addToHistory, getHistory, getProjects, updateProjectName, saveWorkflowTemplate, getWorkflowTemplates, deleteWorkflowTemplate } from '../../services/storageService';
+import { saveProjectData, loadProjectData, addToHistory, addBatchToHistory, getHistory, getProjects, updateProjectName, saveWorkflowTemplate, getWorkflowTemplates, deleteWorkflowTemplate } from '../../services/storageService';
 
 const edgeTypes = {
   deletable: DeletableEdge,
@@ -332,15 +332,18 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
       });
       
       if (resultImages.length > 0) {
-          // Add first image to history (or all? keep simple for now)
-          addToHistory({
+          // Add ALL images to history
+          const historyPayload = resultImages.map(img => ({
               prompt: params.prompt,
-              imageData: resultImages[0],
+              imageData: img,
               model: params.model,
               aspectRatio: params.aspectRatio || "16:9",
               camera: params.camera,
               referenceImages: collectedImages 
-          });
+          }));
+
+          await addBatchToHistory(historyPayload);
+
           if (activeMenu === 'history') {
              getHistory().then(setHistoryItems);
           }
