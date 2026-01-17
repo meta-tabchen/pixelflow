@@ -142,8 +142,10 @@ export const SimpleMode: React.FC = () => {
 
               {generatedImage && (
                 <div className="mt-8 animate-in fade-in zoom-in duration-300">
-                  <div className="relative group rounded-xl overflow-hidden border border-slate-700 shadow-2xl">
-                    <img src={generatedImage} alt="Generated" className="w-full h-auto object-cover" />
+                  <div className="relative group rounded-xl overflow-hidden border border-slate-700 shadow-2xl bg-black/40">
+                    <div className="w-full flex items-center justify-center min-h-[300px]">
+                        <img src={generatedImage} alt="Generated" className="max-w-full max-h-[600px] object-contain shadow-2xl" />
+                    </div>
                     <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                       <a href={generatedImage} download="aether-creation.png" className="p-3 bg-white text-black rounded-full hover:scale-110 transition-transform">
                         <Download className="w-6 h-6" />

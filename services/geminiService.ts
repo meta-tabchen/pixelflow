@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Modality } from "@google/genai";
-import { GeneratorModel, GenerateImageParams } from "../types";
+import { GeneratorModel, GenerateImageParams, GenerateTextParams } from "../types";
 import { getUserApiKey } from "./storageService";
 
 // Helper to get the current valid API key
@@ -16,7 +16,7 @@ export const isKeyRequired = () => {
 };
 
 // Initialize AI on demand to ensure we always use the latest key
-const getAI = () => {
+export const getAI = () => {
   const apiKey = getActiveApiKey();
   if (!apiKey) throw new Error("API Key is missing. Please provide a Gemini API Key in Settings.");
   return new GoogleGenAI({ apiKey });
@@ -59,7 +59,6 @@ export const fileToBase64 = (file: File): Promise<string> => {
 };
 
 // Internal function for a single generation request
-// Modified to return an array of strings, as one request might yield multiple images
 const generateSingleImage = async (params: GenerateImageParams): Promise<string[]> => {
     const ai = getAI();
     const parts: any[] = [];
@@ -88,34 +87,53 @@ const generateSingleImage = async (params: GenerateImageParams): Promise<string[
     if (params.camera) {
         finalPrompt = `${finalPrompt}, ${params.camera}`;
     }
+    
+    // Construct Image Config dynamically
+    const imageConfig: any = {};
+    
+    // Valid Aspect Ratios supported by Gemini API
+    const SUPPORTED_RATIOS = ["1:1", "3:4", "4:3", "9:16", "16:9"];
 
+    if (params.aspectRatio) {
+        if (SUPPORTED_RATIOS.includes(params.aspectRatio)) {
+            // Use native API config for supported ratios
+            imageConfig.aspectRatio = params.aspectRatio;
+        } else {
+            // Fallback: Append to prompt for unsupported ratios (e.g. 21:9)
+            finalPrompt = `${finalPrompt}, aspect ratio ${params.aspectRatio}`;
+        }
+    }
+
+    // Append the final prompt text
     parts.push({ text: finalPrompt });
 
+    // Gemini 3 Pro Image Preview supports imageSize. 
+    if (params.model === GeneratorModel.GEMINI_PRO_IMAGE) {
+        imageConfig.imageSize = params.imageSize || "1K";
+    }
+
+    // Only add imageConfig to request if it has properties
+    const config: any = {
+        responseModalities: [Modality.TEXT, Modality.IMAGE],
+    };
+
+    if (Object.keys(imageConfig).length > 0) {
+        config.imageConfig = imageConfig;
+    }
+
     try {
-      console.log(">>> [GeminiService] Sending Request:", { model: params.model, config: params });
+      console.log(">>> [GeminiService] Sending Request:", { model: params.model, config: params, computedConfig: config });
 
       const response = await ai.models.generateContent({
         model: params.model,
         contents: {
           parts: parts,
         },
-        config: {
-          responseModalities: [Modality.TEXT, Modality.IMAGE],
-          imageConfig: {
-            aspectRatio: params.aspectRatio || "16:9",
-            imageSize: params.model === GeneratorModel.GEMINI_PRO_IMAGE ? (params.imageSize || "1K") : undefined
-          }
-        }
+        config: config
       });
 
       // --- DEBUG LOGS START ---
       console.log(">>> [GeminiService] RAW RESPONSE OBJECT:", response);
-      if (response.candidates) {
-        console.log(">>> [GeminiService] Candidates length:", response.candidates.length);
-        response.candidates.forEach((c, i) => {
-            console.log(`>>>Candidate[${i}] content parts:`, c.content?.parts);
-        });
-      }
       // --- DEBUG LOGS END ---
 
       const images: string[] = [];
@@ -125,7 +143,6 @@ const generateSingleImage = async (params: GenerateImageParams): Promise<string[
               if (candidate.content && candidate.content.parts) {
                   candidate.content.parts.forEach(part => {
                       if (part.inlineData && part.inlineData.data) {
-                          // Use the MIME type from the response if available, default to png
                           const mimeType = part.inlineData.mimeType || 'image/png';
                           images.push(`data:${mimeType};base64,${part.inlineData.data}`);
                       }
@@ -152,23 +169,53 @@ export const generateImageContent = async (params: GenerateImageParams): Promise
   }
 
   const count = params.numberOfImages || 1;
-  console.log(`>>> [GeminiService] Starting batch generation. Count: ${count}`);
-
+  
   // Create an array of promises to run in parallel
-  // Each generateSingleImage can now return multiple images
   const promises = Array.from({ length: count }).map(() => 
     withRetry(() => generateSingleImage(params))
   );
 
   try {
       const resultsNested = await Promise.all(promises);
-      // Flatten the array of arrays into a single array of strings
       const results = resultsNested.flat();
-      console.log(">>> [GeminiService] Batch generation complete. Results:", results);
       return results;
   } catch (error) {
       throw error;
   }
+};
+
+// --- NEW Text Generation ---
+export const generateTextContent = async (params: GenerateTextParams): Promise<string> => {
+  if (isKeyRequired()) {
+     throw new Error("DEMO_KEY_RESTRICTION");
+  }
+
+  return withRetry(async () => {
+      const ai = getAI();
+      const parts: any[] = [];
+
+      // Add Images if any
+      if (params.images) {
+          params.images.forEach(img => {
+               const imageData = img.startsWith('data:') ? img.split(',')[1] : img;
+               parts.push({
+                   inlineData: {
+                       mimeType: 'image/png',
+                       data: imageData
+                   }
+               });
+          });
+      }
+
+      parts.push({ text: params.prompt });
+
+      const response = await ai.models.generateContent({
+          model: params.model,
+          contents: { parts }
+      });
+
+      return response.text || "";
+  });
 };
 
 export const optimizePrompt = async (rawPrompt: string): Promise<string> => {

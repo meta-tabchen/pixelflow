@@ -15,9 +15,10 @@ import ReactFlow, {
   ReactFlowProvider,
   useReactFlow,
   OnSelectionChangeParams,
-  ReactFlowInstance
+  ReactFlowInstance,
+  NodeMouseHandler,
+  useViewport
 } from 'reactflow';
-// Added NodeData to the imported types to fix property access errors on node.data
 import { NodeType, GeneratorModel, HistoryItem, ProjectMeta, WorkflowTemplate, NodeData } from '../../types';
 import { nodeTypes } from './CustomNodes';
 import { DeletableEdge } from './CustomEdges';
@@ -53,15 +54,98 @@ import {
   Unlock,
   ArrowLeft,
   Sparkles,
-  Workflow
+  Workflow,
+  MessageSquareText,
+  Copy,
+  Scissors,
+  Play,
+  Ungroup
 } from 'lucide-react';
-import { generateImageContent, isKeyRequired } from '../../services/geminiService';
+import { generateImageContent, generateTextContent, isKeyRequired } from '../../services/geminiService';
 import { ImageEditor } from './ImageEditor';
 import { WorkflowModal } from './WorkflowModal';
+import { CopilotSidebar } from './CopilotSidebar';
 import { saveProjectData, loadProjectData, addToHistory, addBatchToHistory, getHistory, getProjects, updateProjectName, saveWorkflowTemplate, getWorkflowTemplates, deleteWorkflowTemplate } from '../../services/storageService';
 
 const edgeTypes = {
   deletable: DeletableEdge,
+};
+
+// --- Selection Overlay Component ---
+const SelectionOverlay = ({ 
+    selectedNodes, 
+    onCluster, 
+    onRunSeq, 
+    onSave, 
+    onUngroup 
+}: { 
+    selectedNodes: Node<NodeData>[],
+    onCluster: () => void,
+    onRunSeq: () => void,
+    onSave: () => void,
+    onUngroup: () => void
+}) => {
+    const { zoom } = useViewport();
+    
+    if (selectedNodes.length === 0) return null;
+    
+    // Calculate bounding box
+    const rect = getRectOfNodes(selectedNodes);
+    if (!rect) return null;
+
+    const hasGroup = selectedNodes.some(n => n.type === NodeType.GROUP);
+    const canCluster = selectedNodes.length > 1;
+    // Only show Run Seq if multiple nodes are selected OR if a single Group node is selected
+    const showRunSeq = selectedNodes.length > 1 || (selectedNodes.length === 1 && hasGroup);
+
+    // Scale logic to keep the menu size consistent visually regardless of zoom
+    const scale = 1 / Math.max(zoom, 0.1);
+    
+    return (
+        <div 
+            className="absolute z-50 origin-bottom left-0 top-0 pointer-events-none"
+            style={{
+                transform: `translate(${rect.x + rect.width / 2}px, ${rect.y - (60 * scale)}px) scale(${scale})`,
+            }}
+        >
+            <div className="flex items-center gap-1 bg-zinc-950/90 border border-zinc-700 p-1.5 rounded-full shadow-2xl backdrop-blur-md -translate-x-1/2 pointer-events-auto">
+               {canCluster && (
+                 <>
+                    <button onClick={onCluster} className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/10 rounded-full text-zinc-300 hover:text-white transition-colors text-xs font-bold uppercase tracking-wide whitespace-nowrap">
+                        <BoxSelect size={12} className="text-blue-400"/> 
+                        Cluster
+                    </button>
+                    <div className="w-px h-4 bg-white/10" />
+                 </>
+               )}
+               
+               {showRunSeq && (
+                 <>
+                    <button onClick={onRunSeq} className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/10 rounded-full text-zinc-300 hover:text-white transition-colors text-xs font-bold uppercase tracking-wide whitespace-nowrap">
+                        <Play size={12} className="text-green-400 fill-current"/> 
+                        Run Seq
+                    </button>
+                    <div className="w-px h-4 bg-white/10" />
+                 </>
+               )}
+               
+               <button onClick={onSave} className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/10 rounded-full text-zinc-300 hover:text-white transition-colors text-xs font-bold uppercase tracking-wide whitespace-nowrap">
+                  <Save size={12} className="text-amber-400"/> 
+                  Save
+               </button>
+               
+               {hasGroup && (
+                   <>
+                    <div className="w-px h-4 bg-white/10" />
+                    <button onClick={onUngroup} className="flex items-center gap-2 px-3 py-1.5 hover:bg-red-500/10 rounded-full text-zinc-300 hover:text-red-400 transition-colors text-xs font-bold uppercase tracking-wide whitespace-nowrap">
+                        <Ungroup size={12}/> 
+                        Ungroup
+                    </button>
+                   </>
+               )}
+            </div>
+        </div>
+    );
 };
 
 interface NodeEditorProps {
@@ -71,16 +155,19 @@ interface NodeEditorProps {
 }
 
 export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpenSettings }) => {
-  // React Flow State - Added NodeData generic to useNodesState to fix type errors when accessing data
+  // React Flow State
   const [nodes, setNodes, onNodesChange] = useNodesState<NodeData>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   
-  // Selection State - Explicitly typed to Node<NodeData>[]
+  // Selection State
   const [selectedNodes, setSelectedNodes] = useState<Node<NodeData>[]>([]);
   
   // Instance State for Custom Controls
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
   const [isLocked, setIsLocked] = useState(false);
+  
+  // Context Menu State
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 
   // Refs for Access inside Async Functions
   const nodesRef = useRef(nodes);
@@ -102,6 +189,7 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
   
   // Modal State
   const [isWorkflowModalOpen, setIsWorkflowModalOpen] = useState(false);
+  const [isCopilotOpen, setIsCopilotOpen] = useState(false);
 
   // UI State
   const [activeMenu, setActiveMenu] = useState<'add' | 'history' | 'workflows' | null>(null);
@@ -167,7 +255,25 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
     setEdges((eds) => addEdge({ ...params, type: 'deletable', animated: true, style: { stroke: '#3b82f6', strokeWidth: 2, strokeOpacity: 0.8 } }, eds));
   }, [setEdges, isLocked]);
 
-  // Fixed updateNodeData to handle newData as Partial<NodeData> correctly
+  const onNodeContextMenu: NodeMouseHandler = useCallback(
+    (event, node) => {
+      event.preventDefault();
+      // If we right-click a node that isn't selected, select it exclusively
+      const isSelected = node.selected || selectedNodes.some(n => n.id === node.id);
+      if (!isSelected) {
+          setNodes((nds) => nds.map(n => ({...n, selected: n.id === node.id})));
+          setSelectedNodes([node]); 
+      }
+      setContextMenu({ x: event.clientX, y: event.clientY });
+    },
+    [selectedNodes, setNodes]
+  );
+
+  const onPaneClick = useCallback(() => {
+    setContextMenu(null);
+    setActiveMenu(null);
+  }, []);
+
   const updateNodeData = useCallback((id: string, newData: Partial<NodeData>) => {
     setNodes((nds) => 
       nds.map((node) => {
@@ -206,6 +312,11 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
     setEdges((eds) => eds.filter((edge) => edge.source !== id && edge.target !== id));
   }, [setNodes, setEdges, isLocked]);
 
+  const handleDeleteSelected = useCallback(() => {
+     selectedNodes.forEach(node => deleteNode(node.id));
+     setContextMenu(null);
+  }, [selectedNodes, deleteNode]);
+
   const addNextNode = useCallback((sourceId: string) => {
     if (isLocked) return;
     setNodes((nds) => {
@@ -222,7 +333,13 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
             y: sourceNode.position.y 
         };
 
-        const inheritedParams = sourceNode.data.params ? { ...sourceNode.data.params } : { model: GeneratorModel.GEMINI_FLASH_IMAGE, aspectRatio: "16:9", imageSize: "1K", numberOfImages: 1 };
+        // Inherit params but ensure valid image model
+        let inheritedParams = sourceNode.data.params ? { ...sourceNode.data.params } : { model: GeneratorModel.GEMINI_FLASH_IMAGE, aspectRatio: "16:9", imageSize: "1K", numberOfImages: 1 };
+        
+        // Prevent inheriting Text models for Image nodes
+        if (inheritedParams.model === GeneratorModel.GEMINI_FLASH_TEXT || inheritedParams.model === GeneratorModel.GEMINI_PRO_TEXT) {
+            inheritedParams.model = GeneratorModel.GEMINI_FLASH_IMAGE;
+        }
 
         const newNode: Node<NodeData> = {
             id: newId,
@@ -261,95 +378,166 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
     const currentEdges = edgesRef.current;
     
     const node = currentNodes.find(n => n.id === id);
-    // Allow empty generator text if we have connected input text nodes
     if (!node) return;
 
     updateNodeData(id, { isLoading: true, result: undefined, results: undefined, error: undefined });
 
     try {
+      // Find connected input nodes
       const inputEdges = currentEdges.filter(e => e.target === id);
-      const collectedImages: string[] = [];
-      const collectedTexts: string[] = [];
+      
+      // Sort edges by source node Y position to allow deterministic indexing for placeholders
+      // This matches the visual order in the "Input Variables" legend
+      inputEdges.sort((a, b) => {
+          const nodeA = currentNodes.find(n => n.id === a.source);
+          const nodeB = currentNodes.find(n => n.id === b.source);
+          return (nodeA?.position.y || 0) - (nodeB?.position.y || 0);
+      });
 
+      // Map edges to their content to preserve index mapping for {{node N}}
+      const inputContent = inputEdges.map(edge => {
+          const sourceNode = currentNodes.find(n => n.id === edge.source);
+          let text: string | null = null;
+          let image: string | null = null;
+
+          if (sourceNode) {
+              // Override checking (for Group execution)
+              if (overrides && overrides.has(edge.source)) {
+                 const ov = overrides.get(edge.source);
+                 if (ov?.result) {
+                     if (typeof ov.result === 'string' && !ov.result.startsWith('data:')) {
+                         text = ov.result;
+                     } else {
+                         image = ov.result;
+                     }
+                 }
+              }
+
+              // Normal extraction if no override or override didn't provide specific type
+              if (!text && !image) {
+                  // Text Extraction
+                  if (sourceNode.type === NodeType.INPUT_TEXT && sourceNode.data.text) {
+                      text = sourceNode.data.text;
+                  } else if (sourceNode.type === NodeType.GEN_TEXT && sourceNode.data.result) {
+                      text = sourceNode.data.result;
+                  }
+
+                  // Image Extraction
+                  if (sourceNode.data.result && sourceNode.data.result.startsWith('data:image')) {
+                      image = sourceNode.data.result;
+                  } else if (sourceNode.data.preview) {
+                      image = sourceNode.data.preview;
+                  } else if (sourceNode.data.image) {
+                      image = sourceNode.data.image;
+                  }
+              }
+          }
+          return { text, image };
+      });
+
+      // Collect for API calls (dense arrays for API, but referencing needs index)
+      const collectedImages = inputContent.map(c => c.image).filter(Boolean) as string[];
+      const allInputTexts = inputContent.map(c => c.text).filter(t => t && t.trim().length > 0) as string[];
+
+      // Add self image if present
       if (node.data.image) {
           collectedImages.push(node.data.image);
       }
 
-      inputEdges.forEach(edge => {
-          if (overrides && overrides.has(edge.source)) {
-               const overrideData = overrides.get(edge.source);
-               if (overrideData?.result) {
-                   collectedImages.push(overrideData.result);
-                   return;
-               }
-          }
+      // --- Prompt Construction with Template Support ---
+      let finalPrompt = node.data.text || "";
+      let usedPlaceholder = false;
 
-          const sourceNode = currentNodes.find(n => n.id === edge.source);
-          if (sourceNode) {
-              // Image Collection
-              if (sourceNode.data.result && sourceNode.data.result.startsWith('data:image')) {
-                  collectedImages.push(sourceNode.data.result);
-              } else if (sourceNode.data.preview) {
-                  collectedImages.push(sourceNode.data.preview);
-              } else if (sourceNode.data.image) {
-                   collectedImages.push(sourceNode.data.image);
-              }
-
-              // Text Collection
-              if (sourceNode.type === NodeType.INPUT_TEXT && sourceNode.data.text) {
-                  collectedTexts.push(sourceNode.data.text);
-              }
+      // Replace {{node N}}, {{node_N}}, {{nodeN}} with the N-th connected input's text
+      // IMPORTANT: We use inputContent array to ensure index matches the Y-sorted connection list
+      finalPrompt = finalPrompt.replace(/\{\{node[_\s]*(\d+)\}\}/gi, (match, indexStr) => {
+          usedPlaceholder = true;
+          const index = parseInt(indexStr);
+          if (!isNaN(index) && inputContent[index] && inputContent[index].text) {
+              return inputContent[index].text!;
           }
+          // If node exists but has no text (e.g., it's an image), return empty to avoid breaking prompt
+          return ""; 
       });
 
-      // Combine prompts: Generator Text + Input Text Nodes
-      const promptParts = [node.data.text, ...collectedTexts].filter(t => t && t.trim().length > 0);
-      
-      if (promptParts.length === 0) {
-          throw new Error("No prompt provided. Please add text to the generator or connect a text node.");
-      }
-
-      const finalPrompt = promptParts.join(", ");
-
-      const params = {
-        prompt: finalPrompt,
-        images: collectedImages, 
-        model: node.data.params?.model as GeneratorModel || GeneratorModel.GEMINI_FLASH_IMAGE,
-        aspectRatio: node.data.params?.aspectRatio as any,
-        imageSize: node.data.params?.imageSize as any,
-        camera: node.data.params?.camera,
-        numberOfImages: node.data.params?.numberOfImages || 1
-      };
-
-      const resultImages = await generateImageContent(params);
-      console.log(">>> [NodeEditor] Final Result Images:", resultImages);
-
-      // Store all results, set first as main result
-      updateNodeData(id, { 
-          results: resultImages, 
-          result: resultImages[0], 
-          error: undefined 
+      // Replace {{input}} with all connected text inputs joined
+      finalPrompt = finalPrompt.replace(/\{\{input\}\}/gi, (match) => {
+          usedPlaceholder = true;
+          return allInputTexts.join("\n");
       });
-      
-      if (resultImages.length > 0) {
-          // Add ALL images to history
-          const historyPayload = resultImages.map(img => ({
-              prompt: params.prompt,
-              imageData: img,
-              model: params.model,
-              aspectRatio: params.aspectRatio || "16:9",
-              camera: params.camera,
-              referenceImages: collectedImages 
-          }));
 
-          await addBatchToHistory(historyPayload);
-
-          if (activeMenu === 'history') {
-             getHistory().then(setHistoryItems);
-          }
+      // Fallback: If no placeholders used, append texts to the end (Legacy behavior)
+      if (!usedPlaceholder && allInputTexts.length > 0) {
+           finalPrompt = [finalPrompt, ...allInputTexts].join("\n\n");
       }
 
-      return resultImages[0];
+      if (node.type === NodeType.GEN_TEXT) {
+          // --- Text Generation ---
+          if (!finalPrompt && collectedImages.length === 0) {
+              throw new Error("No prompt or images provided.");
+          }
+          
+          const resultText = await generateTextContent({
+              prompt: finalPrompt || "Describe the input images.",
+              images: collectedImages,
+              model: node.data.params?.model || GeneratorModel.GEMINI_FLASH_TEXT
+          });
+          
+          updateNodeData(id, { result: resultText, error: undefined });
+          return resultText;
+
+      } else {
+          // --- Image Generation ---
+          if (!finalPrompt) {
+              throw new Error("No prompt provided. Please add text to the generator or connect a text node.");
+          }
+
+          // Strict Model Validation for Image Generation
+          let selectedModel = node.data.params?.model as GeneratorModel;
+          if (selectedModel === GeneratorModel.GEMINI_FLASH_TEXT || selectedModel === GeneratorModel.GEMINI_PRO_TEXT || !selectedModel) {
+              // Default to Flash Image if invalid/text model is set
+              selectedModel = GeneratorModel.GEMINI_FLASH_IMAGE;
+          }
+
+          const params = {
+            prompt: finalPrompt,
+            images: collectedImages, 
+            model: selectedModel,
+            aspectRatio: node.data.params?.aspectRatio as any,
+            imageSize: node.data.params?.imageSize as any,
+            camera: node.data.params?.camera,
+            numberOfImages: node.data.params?.numberOfImages || 1
+          };
+
+          const resultImages = await generateImageContent(params);
+          console.log(">>> [NodeEditor] Final Result Images:", resultImages);
+
+          // Store all results, set first as main result
+          updateNodeData(id, { 
+              results: resultImages, 
+              result: resultImages[0], 
+              error: undefined 
+          });
+          
+          if (resultImages.length > 0) {
+              const historyPayload = resultImages.map(img => ({
+                  prompt: params.prompt,
+                  imageData: img,
+                  model: params.model,
+                  aspectRatio: params.aspectRatio || "16:9",
+                  camera: params.camera,
+                  referenceImages: collectedImages 
+              }));
+
+              await addBatchToHistory(historyPayload);
+
+              if (activeMenu === 'history') {
+                 getHistory().then(setHistoryItems);
+              }
+          }
+
+          return resultImages[0];
+      }
 
     } catch (error: any) {
       console.error("Node Generation Error", error);
@@ -360,7 +548,7 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
         if (errorMessage.includes("503") || errorMessage.includes("500")) errorMessage = "Service unavailable. Please try again.";
         if (errorMessage.includes("429")) errorMessage = "Rate limit exceeded. Please wait a moment.";
         if (errorMessage.includes("DEMO_KEY_RESTRICTION")) {
-            errorMessage = "Image generation disabled (Demo Key). Please enter your own key in Settings.";
+            errorMessage = "Generation disabled (Demo Key). Please enter your own key in Settings.";
         }
       }
       updateNodeData(id, { result: undefined, results: undefined, error: errorMessage }); 
@@ -426,15 +614,33 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
 
       return [groupNode, ...updatedNodes];
     });
+    setContextMenu(null);
   }, [setNodes]);
 
-  const handleUngroupNodes = useCallback((groupId: string) => {
+  const handleUngroupNodes = useCallback((groupId?: string) => {
+    // If no specific group ID is passed (e.g. from selection menu), try to find from selected nodes
+    let targetGroupId = groupId;
+    
+    if (!targetGroupId) {
+       // Check if a group node is explicitly selected
+       const selectedGroup = nodesRef.current.find(n => n.selected && n.type === NodeType.GROUP);
+       if (selectedGroup) {
+           targetGroupId = selectedGroup.id;
+       } else {
+           // Check if any selected node has a parent
+           const childNode = nodesRef.current.find(n => n.selected && n.parentNode);
+           if (childNode) targetGroupId = childNode.parentNode;
+       }
+    }
+
+    if (!targetGroupId) return;
+
     setNodes((nds) => {
-      const groupNode = nds.find(n => n.id === groupId);
+      const groupNode = nds.find(n => n.id === targetGroupId);
       if (!groupNode) return nds;
 
-      const children = nds.filter(n => n.parentNode === groupId);
-      const others = nds.filter(n => n.id !== groupId && n.parentNode !== groupId);
+      const children = nds.filter(n => n.parentNode === targetGroupId);
+      const others = nds.filter(n => n.id !== targetGroupId && n.parentNode !== targetGroupId);
       
       const updatedChildren = children.map(n => {
          const absX = groupNode.position.x + n.position.x;
@@ -452,38 +658,34 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
     });
   }, [setNodes]);
 
-  const handleRunGroup = useCallback(async (groupId: string) => {
+  const runNodeSequence = useCallback(async (nodesToRun: Node<NodeData>[]) => {
       const currentNodes = nodesRef.current;
       const currentEdges = edgesRef.current;
       
-      const groupNodes = currentNodes.filter(n => n.parentNode === groupId);
-      const groupNodeIds = new Set(groupNodes.map(n => n.id));
+      if (nodesToRun.length === 0) return;
+      const runNodeIds = new Set(nodesToRun.map(n => n.id));
 
-      if (groupNodes.length === 0) return;
-
-      const internalEdges = currentEdges.filter(e => 
-          groupNodeIds.has(e.source) && groupNodeIds.has(e.target)
-      );
-
+      // Calculate dependencies strictly within the selection
       const adjacency = new Map<string, string[]>();
       const inDegree = new Map<string, number>();
 
-      groupNodes.forEach(n => {
+      nodesToRun.forEach(n => {
           adjacency.set(n.id, []);
           inDegree.set(n.id, 0);
       });
 
-      internalEdges.forEach(e => {
-          adjacency.get(e.source)?.push(e.target);
-          inDegree.set(e.target, (inDegree.get(e.target) || 0) + 1);
+      currentEdges.forEach(e => {
+          if (runNodeIds.has(e.source) && runNodeIds.has(e.target)) {
+              adjacency.get(e.source)?.push(e.target);
+              inDegree.set(e.target, (inDegree.get(e.target) || 0) + 1);
+          }
       });
 
-      const queue = groupNodes.filter(n => (inDegree.get(n.id) || 0) === 0);
+      // Topological Sort
+      const queue = nodesToRun.filter(n => (inDegree.get(n.id) || 0) === 0);
       
-      queue.sort((a, b) => {
-          if (Math.abs(a.position.y - b.position.y) > 50) return a.position.y - b.position.y;
-          return a.position.x - b.position.x;
-      });
+      // Sort initial queue by Y position (top-down execution preference for independent nodes)
+      queue.sort((a, b) => a.position.y - b.position.y);
 
       const executionOrder: string[] = [];
       const tempInDegree = new Map(inDegree);
@@ -497,30 +699,46 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
           for (const neighborId of neighbors) {
               tempInDegree.set(neighborId, (tempInDegree.get(neighborId)! - 1));
               if (tempInDegree.get(neighborId) === 0) {
-                  const neighborNode = groupNodes.find(n => n.id === neighborId);
+                  const neighborNode = nodesToRun.find(n => n.id === neighborId);
                   if (neighborNode) processQueue.push(neighborNode);
               }
           }
       }
-
-      const groupRunResults = new Map<string, any>();
-
-      for (const nodeId of executionOrder) {
-          const node = currentNodes.find(n => n.id === nodeId);
-          if (node && (node.type === NodeType.GEN_IMAGE || node.type === NodeType.PROCESS_GENERATOR)) {
-             const result = await executeNode(nodeId, groupRunResults);
-             if (result) {
-                 groupRunResults.set(nodeId, { result });
-             }
-             // Increased delay to ensure state updates propagate if needed and visually separate steps
-             await new Promise(r => setTimeout(r, 500));
-          }
+      
+      if (executionOrder.length !== nodesToRun.length) {
+          console.warn("Cycle detected or disconnected graph in sequence run. Running reachable nodes.");
       }
 
-  }, [handleNodeRun]);
+      // Execute
+      for (const nodeId of executionOrder) {
+          const node = currentNodes.find(n => n.id === nodeId);
+          if (node && (node.type === NodeType.GEN_IMAGE || node.type === NodeType.GEN_TEXT)) {
+             await executeNode(nodeId);
+             await new Promise(r => setTimeout(r, 200));
+          }
+      }
+  }, [executeNode]);
+
+  const handleRunGroup = useCallback(async (groupId: string) => {
+      const groupNodes = nodesRef.current.filter(n => n.parentNode === groupId);
+      if (groupNodes.length === 0) return;
+      await runNodeSequence(groupNodes);
+  }, [runNodeSequence]);
+
+  const handleRunSelectedSequence = useCallback(() => {
+     // If a group is selected, run its children
+     const selectedGroups = selectedNodes.filter(n => n.type === NodeType.GROUP);
+     if (selectedGroups.length > 0) {
+         selectedGroups.forEach(g => handleRunGroup(g.id));
+         return;
+     }
+     // Otherwise run selected nodes in sequence
+     runNodeSequence(selectedNodes);
+  }, [selectedNodes, runNodeSequence, handleRunGroup]);
 
   const handleCreateWorkflow = useCallback((groupId?: string) => {
      setIsWorkflowModalOpen(true);
+     setContextMenu(null);
   }, []);
 
   const handleSaveModalConfirm = async (data: { name: string; description: string; tags: string[] }) => {
@@ -600,7 +818,6 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
           idMap.set(n.id, newId);
       });
 
-      // Fixed type casting for newNodes to prevent ConcatArray error
       const newNodes: Node<NodeData>[] = templateNodes.map(n => {
           const newId = idMap.get(n.id)!;
           let newParentNode = n.parentNode;
@@ -622,7 +839,6 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
               ...n,
               id: newId,
               parentNode: newParentNode,
-              // Fixed type casting for 'extent'
               extent: (newParentNode ? 'parent' : undefined) as 'parent' | undefined,
               position: position,
               selected: true,
@@ -637,7 +853,6 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
           target: idMap.get(e.target)
       }));
 
-      // Use spread syntax instead of concat to avoid strict type mismatch with optional properties
       setNodes((nds) => [...nds.map(n => ({...n, selected: false})), ...newNodes]);
       setEdges((eds) => [...eds, ...newEdges]);
       setActiveMenu(null);
@@ -650,6 +865,54 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
           getWorkflowTemplates().then(setWorkflowTemplates);
       }
   };
+
+  const handleCopilotAddNodes = useCallback((newNodesData: any[], newConnections: any[]) => {
+      const centerX = window.innerWidth / 2;
+      const centerY = window.innerHeight / 2;
+      
+      // Calculate positions simply by placing them in a row for now
+      const createdNodes: Node<NodeData>[] = newNodesData.map((n, i) => {
+          const type = n.type || NodeType.GEN_TEXT;
+          let params: any = { model: GeneratorModel.GEMINI_FLASH_TEXT };
+          
+          if (type === NodeType.GEN_IMAGE) {
+              params = { 
+                  model: GeneratorModel.GEMINI_FLASH_IMAGE, 
+                  aspectRatio: "16:9", 
+                  imageSize: "1K", 
+                  numberOfImages: 1 
+              };
+          }
+
+          return {
+              id: `copilot-${Date.now()}-${i}`,
+              type: type,
+              position: { x: centerX + (i * 400), y: centerY },
+              data: {
+                  title: n.label || "AI Node",
+                  text: n.prompt || "",
+                  params: params
+              }
+          };
+      });
+
+      const createdEdges: Edge[] = [];
+      newConnections.forEach(conn => {
+          if (createdNodes[conn.fromIndex] && createdNodes[conn.toIndex]) {
+              createdEdges.push({
+                  id: `e-${createdNodes[conn.fromIndex].id}-${createdNodes[conn.toIndex].id}`,
+                  source: createdNodes[conn.fromIndex].id,
+                  target: createdNodes[conn.toIndex].id,
+                  type: 'deletable',
+                  animated: true,
+                  style: { stroke: '#3b82f6', strokeWidth: 2 }
+              });
+          }
+      });
+
+      setNodes(nds => [...nds, ...createdNodes]);
+      setEdges(eds => [...eds, ...createdEdges]);
+  }, [setNodes, setEdges]);
 
   const nodesWithHandlers = nodes.map(node => ({
     ...node,
@@ -669,6 +932,16 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
   const addNode = (type: NodeType) => {
     const centerX = window.innerWidth / 2 - 150;
     const centerY = window.innerHeight / 2 - 100;
+    
+    let defaultParams: any = {};
+    if (type === NodeType.GEN_IMAGE) {
+        defaultParams = { model: GeneratorModel.GEMINI_FLASH_IMAGE, aspectRatio: "16:9", imageSize: "1K", numberOfImages: 1 };
+    } else if (type === NodeType.GEN_TEXT) {
+        defaultParams = { model: GeneratorModel.GEMINI_FLASH_TEXT };
+    } else {
+        // Fallback for generic calls
+        defaultParams = { model: GeneratorModel.GEMINI_FLASH_IMAGE, aspectRatio: "16:9", imageSize: "1K", numberOfImages: 1 };
+    }
 
     const id = `${type}-${Date.now()}`;
     const newNode: Node<NodeData> = {
@@ -676,7 +949,7 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
       type,
       position: { x: centerX + Math.random() * 50, y: centerY + Math.random() * 50 },
       data: { 
-        params: { model: GeneratorModel.GEMINI_FLASH_IMAGE, aspectRatio: "16:9", imageSize: "1K", numberOfImages: 1 }
+        params: defaultParams
       }
     };
     setNodes((nds) => nds.concat(newNode));
@@ -685,31 +958,249 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
 
   return (
     <div className="relative w-full h-full bg-black overflow-hidden">
+        <CopilotSidebar 
+            isOpen={isCopilotOpen} 
+            onClose={() => setIsCopilotOpen(false)}
+            onAddNodes={handleCopilotAddNodes}
+        />
+
+        {/* Top Right Controls */}
+        <div className="absolute top-6 right-6 z-50 flex items-center gap-3">
+           <button 
+             onClick={() => setIsCopilotOpen(!isCopilotOpen)}
+             className={`flex items-center gap-2 px-4 py-2 rounded-full border shadow-xl transition-all ${isCopilotOpen ? 'bg-blue-600 border-blue-500 text-white' : 'bg-zinc-900 border-zinc-700 text-zinc-400 hover:text-white'}`}
+           >
+              <Sparkles size={16} />
+              <span className="text-xs font-bold uppercase tracking-wide">Copilot</span>
+           </button>
+           
+           <button 
+              onClick={() => setIsLocked(!isLocked)}
+              className={`w-10 h-10 flex items-center justify-center rounded-full border shadow-xl transition-all ${isLocked ? 'bg-red-500/20 text-red-400 border-red-500/50' : 'bg-zinc-900 border-zinc-700 text-zinc-400 hover:text-white'}`}
+              title={isLocked ? "Unlock Canvas" : "Lock Canvas"}
+           >
+              {isLocked ? <Lock size={16} /> : <Unlock size={16} />}
+           </button>
+        </div>
+
+        {/* Top Left Controls */}
+        <div className="absolute top-6 left-6 z-50 flex items-center gap-4">
+            <button 
+                onClick={onBack}
+                className="w-10 h-10 flex items-center justify-center rounded-full bg-zinc-900 border border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all shadow-xl"
+            >
+                <ArrowLeft size={20} />
+            </button>
+            
+            <div className="flex flex-col">
+                <div className="flex items-center gap-2 group">
+                    {isRenaming ? (
+                        <input 
+                            autoFocus
+                            className="bg-zinc-900 text-white font-bold text-lg px-2 rounded border border-blue-500 outline-none w-64"
+                            value={projectName}
+                            onChange={(e) => setProjectName(e.target.value)}
+                            onBlur={handleRenameProject}
+                            onKeyDown={(e) => e.key === 'Enter' && handleRenameProject()}
+                        />
+                    ) : (
+                        <h1 
+                            className="text-lg font-bold text-white cursor-pointer hover:text-blue-400 transition-colors flex items-center gap-2"
+                            onClick={() => setIsRenaming(true)}
+                        >
+                            {projectName}
+                            <Pencil size={12} className="opacity-0 group-hover:opacity-100 transition-opacity text-zinc-500" />
+                        </h1>
+                    )}
+                </div>
+                <div className="flex items-center gap-2 text-[10px] text-zinc-500 font-mono">
+                    {lastSaved ? (
+                        <span className="flex items-center gap-1.5">
+                            <Check size={10} className="text-green-500" />
+                            Saved {lastSaved.toLocaleTimeString()}
+                        </span>
+                    ) : (
+                        <span>Unsaved</span>
+                    )}
+                </div>
+            </div>
+        </div>
+
+        <ReactFlow
+            nodes={nodesWithHandlers}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onConnect={onConnect}
+            onInit={setRfInstance}
+            onSelectionChange={onSelectionChange}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            defaultEdgeOptions={{ type: 'deletable', animated: true, style: { stroke: '#3b82f6', strokeWidth: 2 } }}
+            connectionLineStyle={{ stroke: '#3b82f6', strokeWidth: 2 }}
+            minZoom={0.1}
+            maxZoom={2}
+            className="bg-black"
+            proOptions={{ hideAttribution: true }}
+            panOnDrag={isLocked ? false : [2]}
+            selectionOnDrag={!isLocked}
+            panOnScroll={!isLocked}
+            zoomOnScroll={false}
+            zoomOnPinch={!isLocked}
+            selectionMode={SelectionMode.Partial}
+            onPaneClick={onPaneClick}
+            onNodeContextMenu={onNodeContextMenu}
+        >
+            <Background color="#27272a" gap={20} size={1} variant={BackgroundVariant.Dots} />
+            <MiniMap 
+                nodeStrokeColor="#3f3f46" 
+                nodeColor="#18181b" 
+                maskColor="rgba(0, 0, 0, 0.7)"
+                className="!bg-zinc-900 !border !border-zinc-800 !rounded-xl !bottom-6 !left-6 !w-40 !h-40"
+            />
+            {/* New Floating Selection Menu */}
+            <SelectionOverlay 
+                selectedNodes={selectedNodes} 
+                onCluster={handleGroupNodes}
+                onRunSeq={handleRunSelectedSequence}
+                onSave={() => handleCreateWorkflow()}
+                onUngroup={() => handleUngroupNodes()}
+            />
+        </ReactFlow>
+
+        {/* Right Click Context Menu (Simplified, now mostly replaced by Floating Menu but kept for backup/direct delete) */}
+        {contextMenu && (
+           <div 
+             style={{ top: contextMenu.y, left: contextMenu.x }} 
+             className="fixed z-[100] bg-zinc-950/95 border border-zinc-700 rounded-lg shadow-2xl p-1.5 w-48 flex flex-col gap-1 backdrop-blur-md animate-in fade-in zoom-in-95 duration-100"
+           >
+               <button onClick={handleDeleteSelected} className="flex items-center gap-2 px-3 py-2 hover:bg-red-500/20 rounded-md text-xs font-medium text-red-400 hover:text-red-300 transition-colors">
+                  <Trash2 size={14}/> 
+                  Delete Selection
+               </button>
+           </div>
+        )}
+
+        {/* Bottom Dock Menu */}
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center gap-4">
+             {/* Sub Menus */}
+             {activeMenu === 'add' && (
+                 <div className="flex items-center gap-2 bg-zinc-900/90 border border-zinc-700 p-2 rounded-2xl shadow-2xl backdrop-blur-xl animate-in slide-in-from-bottom-2 mb-2">
+                     <button onClick={() => addNode(NodeType.GEN_IMAGE)} className="flex flex-col items-center gap-1 p-3 rounded-xl hover:bg-white/10 transition-all w-20 group">
+                         <div className="w-8 h-8 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-400 group-hover:scale-110 transition-transform"><Sparkles size={16} /></div>
+                         <span className="text-[10px] font-bold text-zinc-400 group-hover:text-white">Generator</span>
+                     </button>
+                     <button onClick={() => addNode(NodeType.GEN_TEXT)} className="flex flex-col items-center gap-1 p-3 rounded-xl hover:bg-white/10 transition-all w-20 group">
+                         <div className="w-8 h-8 rounded-full bg-amber-500/10 flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform"><MessageSquareText size={16} /></div>
+                         <span className="text-[10px] font-bold text-zinc-400 group-hover:text-white">Text Gen</span>
+                     </button>
+                     <div className="w-px h-8 bg-white/10" />
+                     <button onClick={() => addNode(NodeType.INPUT_TEXT)} className="flex flex-col items-center gap-1 p-3 rounded-xl hover:bg-white/10 transition-all w-20 group">
+                         <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400 group-hover:text-white group-hover:scale-110 transition-transform"><Type size={16} /></div>
+                         <span className="text-[10px] font-bold text-zinc-400 group-hover:text-white">Text</span>
+                     </button>
+                     <button onClick={() => addNode(NodeType.INPUT_IMAGE)} className="flex flex-col items-center gap-1 p-3 rounded-xl hover:bg-white/10 transition-all w-20 group">
+                         <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400 group-hover:text-white group-hover:scale-110 transition-transform"><ImageIcon size={16} /></div>
+                         <span className="text-[10px] font-bold text-zinc-400 group-hover:text-white">Image</span>
+                     </button>
+                 </div>
+             )}
+
+             {/* ... existing menus for history and workflows ... */}
+             {activeMenu === 'history' && (
+                 <div className="bg-zinc-900/90 border border-zinc-700 p-3 rounded-2xl shadow-2xl backdrop-blur-xl animate-in slide-in-from-bottom-2 mb-2 w-[400px]">
+                      <div className="flex items-center justify-between mb-2 px-1">
+                          <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">History</span>
+                          <button onClick={() => setActiveMenu(null)}><X size={14} className="text-zinc-500" /></button>
+                      </div>
+                      <div className="grid grid-cols-4 gap-2 max-h-[200px] overflow-y-auto custom-scrollbar">
+                          {historyItems.map(item => (
+                              <button key={item.id} onClick={() => handleAddFromHistory(item)} className="aspect-square rounded-lg overflow-hidden border border-white/5 hover:border-blue-500 relative group bg-black/20">
+                                  <img src={item.imageData.startsWith('data:') ? item.imageData : `data:image/png;base64,${item.imageData}`} className="w-full h-full object-contain" />
+                                  <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                      <Plus size={16} className="text-white" />
+                                  </div>
+                              </button>
+                          ))}
+                      </div>
+                 </div>
+             )}
+
+            {activeMenu === 'workflows' && (
+                 <div className="bg-zinc-900/90 border border-zinc-700 p-3 rounded-2xl shadow-2xl backdrop-blur-xl animate-in slide-in-from-bottom-2 mb-2 w-[300px]">
+                      <div className="flex items-center justify-between mb-2 px-1">
+                          <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Workflows</span>
+                          <button onClick={() => setActiveMenu(null)}><X size={14} className="text-zinc-500" /></button>
+                      </div>
+                      <div className="space-y-2 max-h-[200px] overflow-y-auto custom-scrollbar">
+                          {workflowTemplates.length === 0 && <div className="text-center py-4 text-xs text-zinc-500">No saved templates</div>}
+                          {workflowTemplates.map(wf => (
+                              <div key={wf.id} className="flex items-center justify-between p-2 rounded-lg bg-black/20 hover:bg-white/5 group">
+                                  <button onClick={() => handleLoadWorkflow(wf)} className="flex-1 text-left">
+                                      <div className="text-xs font-bold text-zinc-300 group-hover:text-white">{wf.name}</div>
+                                      <div className="text-[9px] text-zinc-500">{wf.nodes.length} nodes</div>
+                                  </button>
+                                  <button onClick={(e) => handleDeleteTemplate(e, wf.id)} className="text-zinc-600 hover:text-red-400 p-1"><Trash2 size={12}/></button>
+                              </div>
+                          ))}
+                      </div>
+                 </div>
+             )}
+
+             {/* Main Bar */}
+             <div className="flex items-center gap-2 bg-zinc-950/80 border border-zinc-800 p-1.5 rounded-full shadow-2xl backdrop-blur-xl">
+                 <button 
+                    onClick={() => setActiveMenu(activeMenu === 'add' ? null : 'add')}
+                    className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${activeMenu === 'add' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700'}`}
+                    title="Add Node"
+                 >
+                    <Plus size={24} />
+                 </button>
+                 
+                 <div className="w-px h-8 bg-zinc-800 mx-1" />
+                 
+                 <button 
+                    onClick={() => {
+                        setActiveMenu(activeMenu === 'history' ? null : 'history');
+                        if(activeMenu !== 'history') getHistory().then(setHistoryItems);
+                    }}
+                    className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${activeMenu === 'history' ? 'bg-purple-600 text-white' : 'hover:bg-zinc-800 text-zinc-400 hover:text-white'}`}
+                    title="History"
+                 >
+                    <Clock size={18} />
+                 </button>
+
+                 <button 
+                    onClick={() => {
+                        setActiveMenu(activeMenu === 'workflows' ? null : 'workflows');
+                        if(activeMenu !== 'workflows') getWorkflowTemplates().then(setWorkflowTemplates);
+                    }}
+                    className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${activeMenu === 'workflows' ? 'bg-green-600 text-white' : 'hover:bg-zinc-800 text-zinc-400 hover:text-white'}`}
+                    title="Workflows"
+                 >
+                    <Workflow size={18} />
+                 </button>
+                 
+                 <div className="w-px h-8 bg-zinc-800 mx-1" />
+
+                 <button 
+                    onClick={handleClear}
+                    className="w-10 h-10 rounded-full flex items-center justify-center hover:bg-red-500/10 text-zinc-400 hover:text-red-400 transition-all"
+                    title="Clear Canvas"
+                 >
+                    <Trash2 size={18} />
+                 </button>
+             </div>
+        </div>
+
         <ImageEditor 
-            isOpen={isEditorOpen} 
-            imageUrl={editingImage} 
+            isOpen={isEditorOpen}
+            imageUrl={editingImage}
             onClose={() => setIsEditorOpen(false)}
-            onSave={(img) => {
-                if (!editingSourceNodeId) return;
-                setNodes((nds) => {
-                    const sourceNode = nds.find(n => n.id === editingSourceNodeId);
-                    if (!sourceNode) return nds;
-                    const newId = `${NodeType.GEN_IMAGE}-${Date.now()}`;
-                    const newNode: Node<NodeData> = {
-                        id: newId,
-                        type: NodeType.GEN_IMAGE,
-                        position: { x: sourceNode.position.x + 420, y: sourceNode.position.y },
-                        data: { 
-                            title: "Edited Asset", 
-                            result: img, // Show as result
-                            image: img.split(',')[1], // Store as input for regeneration
-                            text: sourceNode.data.text || "Variation of edited image...", 
-                            params: sourceNode.data.params || { model: GeneratorModel.GEMINI_FLASH_IMAGE, aspectRatio: "16:9", imageSize: "1K", numberOfImages: 1 }
-                        }
-                    };
-                    setEdges((eds) => addEdge({ id: `e-${editingSourceNodeId}-${newId}`, source: editingSourceNodeId!, target: newId, type: 'deletable', animated: true, style: { stroke: '#3b82f6', strokeWidth: 2 } }, eds));
-                    return [...nds, newNode];
-                });
+            onSave={(newImage) => {
+                if (editingSourceNodeId) {
+                    updateNodeData(editingSourceNodeId, { result: newImage });
+                }
                 setIsEditorOpen(false);
             }}
         />
@@ -720,286 +1211,6 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
             onSave={handleSaveModalConfirm}
         />
 
-        {selectedNodes.length > 1 && (
-            <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[100] animate-in fade-in slide-in-from-top-4 duration-300 pointer-events-none">
-               <div className="glass-panel bg-black/80 rounded-full shadow-2xl px-3 py-2 flex items-center gap-3 pointer-events-auto">
-                  <div className="flex items-center gap-2 pl-2">
-                      <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
-                      <span className="text-xs font-bold text-white tracking-wide">{selectedNodes.length} SELECTED</span>
-                  </div>
-                  <div className="h-4 w-px bg-white/10"></div>
-                  <button onClick={handleGroupNodes} className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-full text-white shadow-lg shadow-blue-900/20 transition-all text-[10px] font-bold uppercase tracking-wider">
-                     <BoxSelect size={12} />
-                     Group
-                  </button>
-                  <button onClick={() => setIsWorkflowModalOpen(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 rounded-full text-white shadow-lg transition-all text-[10px] font-bold uppercase tracking-wider">
-                     <Save size={12} />
-                     Save Workflow
-                  </button>
-               </div>
-            </div>
-        )}
-
-        {/* --- Floating Sidebar --- */}
-        <div className="absolute left-6 top-1/2 -translate-y-1/2 z-50 flex flex-col gap-4 pointer-events-none">
-            <div className="pointer-events-auto bg-zinc-950/90 backdrop-blur-xl rounded-2xl p-3 flex flex-col items-center gap-6 shadow-2xl py-6 w-18 border border-zinc-800">
-                {/* Back Button */}
-                <div className="relative group/menu">
-                    <div className="absolute left-full ml-4 top-1/2 -translate-y-1/2 px-2 py-1 bg-zinc-800 text-white text-xs rounded opacity-0 group-hover/menu:opacity-100 transition-opacity pointer-events-none whitespace-nowrap border border-white/10 z-[60]">
-                        Back to Dashboard
-                    </div>
-                    <button onClick={onBack} className="w-10 h-10 rounded-xl bg-zinc-900 text-zinc-400 hover:text-white hover:bg-zinc-800 flex items-center justify-center transition-all border border-zinc-800" title="Back to Dashboard">
-                        <ArrowLeft size={20} />
-                    </button>
-                </div>
-
-                <div className="w-8 h-px bg-white/5"></div>
-                
-                {/* Add Node Button */}
-                <div 
-                    className="relative group/menu"
-                    onMouseEnter={() => setActiveMenu('add')}
-                    onMouseLeave={() => setActiveMenu(null)}
-                >
-                    <div className="absolute left-full ml-4 top-1/2 -translate-y-1/2 px-2 py-1 bg-zinc-800 text-white text-xs rounded opacity-0 group-hover/menu:opacity-100 transition-opacity pointer-events-none whitespace-nowrap border border-white/10 z-[60]">
-                        Add Nodes
-                    </div>
-                    <button className={`w-12 h-12 rounded-xl flex items-center justify-center transition-all duration-300 ${activeMenu === 'add' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40' : 'bg-zinc-900 text-zinc-400 hover:text-white hover:bg-zinc-800 border border-zinc-800'}`}>
-                        {activeMenu === 'add' ? <X size={24} /> : <Sparkles size={24} strokeWidth={2.5} />}
-                    </button>
-                    {activeMenu === 'add' && (
-                        // Changed ml-6 to pl-6 on absolute container to bridge the hover gap
-                        <div className="absolute left-full pl-6 top-1/2 -translate-y-1/2 w-[280px] animate-in fade-in slide-in-from-left-4 z-[70]">
-                            <div className="bg-zinc-950 rounded-2xl shadow-2xl p-2 flex flex-col gap-1 border border-zinc-800 ring-1 ring-white/5">
-                                <div className="px-3 py-2 text-[10px] font-bold text-zinc-500 uppercase tracking-widest border-b border-white/5 mb-1">
-                                    Node Library
-                                </div>
-                                <button onClick={() => addNode(NodeType.INPUT_TEXT)} className="flex items-center gap-4 p-3 rounded-xl hover:bg-white/5 transition-colors group text-left">
-                                    <div className="w-10 h-10 rounded-lg bg-zinc-900 flex items-center justify-center text-zinc-400 group-hover:text-blue-400 group-hover:bg-blue-500/10 border border-white/5"><Type size={18} /></div>
-                                    <div className="flex flex-col">
-                                        <span className="text-sm font-bold text-zinc-200">Text Prompt</span>
-                                        <span className="text-[10px] text-zinc-500">Raw text input source</span>
-                                    </div>
-                                </button>
-                                <button onClick={() => addNode(NodeType.GEN_IMAGE)} className="flex items-center gap-4 p-3 rounded-xl hover:bg-white/5 transition-colors group text-left">
-                                    <div className="w-10 h-10 rounded-lg bg-zinc-900 flex items-center justify-center text-zinc-400 group-hover:text-purple-400 group-hover:bg-purple-500/10 border border-white/5"><Cpu size={18} /></div>
-                                    <div className="flex flex-col">
-                                        <span className="text-sm font-bold text-zinc-200">Generator</span>
-                                        <span className="text-[10px] text-zinc-500">AI Image synthesis</span>
-                                    </div>
-                                </button>
-                                <button onClick={() => addNode(NodeType.UPLOAD_IMAGE)} className="flex items-center gap-4 p-3 rounded-xl hover:bg-white/5 transition-colors group text-left">
-                                    <div className="w-10 h-10 rounded-lg bg-zinc-900 flex items-center justify-center text-zinc-400 group-hover:text-green-400 group-hover:bg-green-500/10 border border-white/5"><Upload size={18} /></div>
-                                    <div className="flex flex-col">
-                                        <span className="text-sm font-bold text-zinc-200">Upload Asset</span>
-                                        <span className="text-[10px] text-zinc-500">Import local media</span>
-                                    </div>
-                                </button>
-                            </div>
-                        </div>
-                    )}
-                </div>
-
-                {/* Workflow Library */}
-                <div 
-                    className="relative group/menu"
-                    onMouseEnter={() => { setActiveMenu('workflows'); getWorkflowTemplates().then(setWorkflowTemplates); }}
-                    onMouseLeave={() => setActiveMenu(null)}
-                >
-                    <div className="absolute left-full ml-4 top-1/2 -translate-y-1/2 px-2 py-1 bg-zinc-800 text-white text-xs rounded opacity-0 group-hover/menu:opacity-100 transition-opacity pointer-events-none whitespace-nowrap border border-white/10 z-[60]">
-                        Workflows
-                    </div>
-                    <button className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${activeMenu === 'workflows' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-white hover:bg-zinc-800 border border-zinc-800'}`} title="Workflow Library">
-                        <Workflow size={20} strokeWidth={1.5} />
-                    </button>
-                    {activeMenu === 'workflows' && (
-                        // Changed ml-6 to pl-6 on absolute container
-                        <div className="absolute left-full pl-6 top-[-200px] w-[300px] h-[500px] animate-in fade-in slide-in-from-left-4 z-[70]">
-                             <div className="w-full h-full bg-zinc-950 rounded-2xl shadow-2xl flex flex-col border border-zinc-800 ring-1 ring-white/5 overflow-hidden">
-                                <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-white/5">
-                                    <h3 className="text-xs font-bold text-white uppercase tracking-wider">Workflows</h3>
-                                    <button onClick={() => setActiveMenu(null)}><X size={14} className="text-zinc-500 hover:text-white" /></button>
-                                </div>
-                                <div className="flex-1 overflow-y-auto p-2 space-y-2 custom-scrollbar">
-                                    {workflowTemplates.length === 0 ? <div className="text-center p-4 text-zinc-600 text-xs">No templates saved.</div> : null}
-                                    {workflowTemplates.map((item) => (
-                                        <div key={item.id} className="group relative bg-zinc-900/50 rounded-lg p-3 border border-zinc-800 hover:border-blue-500/50 cursor-pointer transition-all" onClick={() => handleLoadWorkflow(item)}>
-                                            <div className="flex items-center justify-between">
-                                                <span className="text-xs font-bold text-zinc-300 group-hover:text-white">{item.name}</span>
-                                                <button onClick={(e) => handleDeleteTemplate(e, item.id)} className="text-zinc-600 hover:text-red-500"><Trash2 size={12} /></button>
-                                            </div>
-                                            <div className="flex flex-wrap gap-1 mt-2">
-                                                {item.tags.slice(0, 3).map((tag, i) => (
-                                                    <span key={i} className="text-[9px] bg-black/40 text-zinc-500 px-1.5 py-0.5 rounded border border-white/5">{tag}</span>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                             </div>
-                        </div>
-                    )}
-                </div>
-
-                {/* History */}
-                <div 
-                    className="relative group/menu"
-                    onMouseEnter={() => { setActiveMenu('history'); getHistory().then(setHistoryItems); }}
-                    onMouseLeave={() => setActiveMenu(null)}
-                >
-                    <div className="absolute left-full ml-4 top-1/2 -translate-y-1/2 px-2 py-1 bg-zinc-800 text-white text-xs rounded opacity-0 group-hover/menu:opacity-100 transition-opacity pointer-events-none whitespace-nowrap border border-white/10 z-[60]">
-                        History
-                    </div>
-                    <button className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${activeMenu === 'history' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-white hover:bg-zinc-800 border border-zinc-800'}`} title="History">
-                        <Clock size={20} strokeWidth={1.5} />
-                    </button>
-                    {activeMenu === 'history' && (
-                        // Changed ml-6 to pl-6 on absolute container
-                        <div className="absolute left-full pl-6 top-[-150px] w-[300px] h-[500px] animate-in fade-in slide-in-from-left-4 z-[70]">
-                             <div className="w-full h-full bg-zinc-950 rounded-2xl shadow-2xl flex flex-col border border-zinc-800 ring-1 ring-white/5 overflow-hidden">
-                                <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-white/5">
-                                    <h3 className="text-xs font-bold text-white uppercase tracking-wider">History</h3>
-                                    <button onClick={() => setActiveMenu(null)}><X size={14} className="text-zinc-500 hover:text-white" /></button>
-                                </div>
-                                <div className="flex-1 overflow-y-auto p-2 space-y-2 custom-scrollbar">
-                                    {historyItems.map((item) => (
-                                        <div key={item.id} className="group relative rounded-lg overflow-hidden border border-zinc-800 hover:border-blue-500/50 cursor-pointer transition-all" onClick={() => handleAddFromHistory(item)}>
-                                            <img src={item.imageData} className="w-full h-auto object-cover opacity-60 group-hover:opacity-100 transition-opacity" />
-                                            <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black to-transparent opacity-0 group-hover:opacity-100">
-                                                <p className="text-[9px] text-white line-clamp-1">{item.prompt}</p>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                             </div>
-                        </div>
-                    )}
-                </div>
-            </div>
-        </div>
-
-        {/* Project Name & Status */}
-        <div className="absolute top-6 left-6 z-40 flex items-center gap-4 bg-black/50 backdrop-blur-md px-4 py-2 rounded-xl border border-white/5 shadow-xl">
-             <div className="w-10 h-10 bg-blue-600/20 rounded-lg flex items-center justify-center border border-blue-500/30 text-blue-400"><Cpu size={20} /></div>
-             <div className="flex flex-col justify-center min-h-[40px]">
-                {isRenaming ? (
-                    <div className="flex items-center gap-2 animate-in fade-in duration-200">
-                        <input 
-                            autoFocus
-                            className="bg-zinc-900/50 border border-blue-500/50 text-white font-bold text-sm rounded px-2 py-0.5 outline-none w-40 placeholder-white/20"
-                            value={projectName}
-                            onChange={(e) => setProjectName(e.target.value)}
-                            onKeyDown={(e) => {
-                                e.stopPropagation(); 
-                                if (e.key === 'Enter') handleRenameProject();
-                                if (e.key === 'Escape') setIsRenaming(false);
-                            }}
-                            onMouseDown={(e) => e.stopPropagation()}
-                        />
-                        <button 
-                            onClick={handleRenameProject} 
-                            className="w-6 h-6 bg-green-500/20 text-green-400 rounded hover:bg-green-500/30 flex items-center justify-center transition-colors"
-                            title="Save Name"
-                        >
-                            <Check size={12} strokeWidth={3} />
-                        </button>
-                    </div>
-                ) : (
-                    <button 
-                        onClick={() => setIsRenaming(true)} 
-                        className="text-white font-bold leading-none text-left flex items-center gap-2 group text-sm hover:text-blue-200 transition-colors"
-                        title="Click to Rename"
-                    >
-                       {projectName} 
-                       <Pencil size={12} className="opacity-0 group-hover:opacity-100 text-zinc-500 transition-opacity" />
-                    </button>
-                )}
-                
-                {!isRenaming && lastSaved && <span className="text-[10px] text-zinc-500 mt-1 font-mono">AUTOSAVE: {lastSaved.toLocaleTimeString()}</span>}
-             </div>
-        </div>
-        
-        <div className="w-full h-full">
-          {!isLoaded ? (
-              <div className="w-full h-full flex items-center justify-center bg-black">
-                  <div className="flex flex-col items-center gap-4">
-                      <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                      <span className="text-zinc-500 text-xs font-mono animate-pulse">INITIALIZING WORKSPACE...</span>
-                  </div>
-              </div>
-          ) : (
-            <>
-            <ReactFlow
-                nodes={nodesWithHandlers}
-                edges={edges}
-                onNodesChange={onNodesChange}
-                onEdgesChange={onEdgesChange}
-                onConnect={onConnect}
-                onSelectionChange={onSelectionChange}
-                nodeTypes={nodeTypes}
-                edgeTypes={edgeTypes}
-                proOptions={{ hideAttribution: true }}
-                selectionOnDrag={true} 
-                panOnDrag={[1, 2]}
-                selectionMode={SelectionMode.Partial}
-                minZoom={0.1}
-                nodesDraggable={!isLocked}
-                elementsSelectable={!isLocked}
-                zoomOnScroll={!isLocked}
-                panOnScroll={!isLocked}
-                onInit={setRfInstance}
-            >
-                <Background color="#18181b" gap={40} size={1} variant={BackgroundVariant.Dots} className="bg-black" />
-                
-                {/* Repositioned MiniMap and Controls to Bottom Right, stacked */}
-                <MiniMap 
-                    className="!absolute !left-auto !bottom-[90px] !right-6 !m-0 !w-[200px] !h-[120px] !bg-[#18181b] !border !border-white/10 !rounded-2xl overflow-hidden !shadow-2xl !z-50" 
-                    maskColor="rgba(0, 0, 0, 0.7)" 
-                    nodeColor={() => '#3b82f6'} 
-                />
-            </ReactFlow>
-
-             {/* Custom Controls Bar */}
-             <div className="absolute bottom-6 right-6 z-50 flex items-center gap-2">
-                <div className="h-14 w-[200px] bg-zinc-950/80 backdrop-blur-xl border border-white/5 rounded-2xl shadow-2xl flex items-center justify-between px-3 p-2">
-                   <button 
-                     onClick={() => rfInstance?.zoomOut()}
-                     className="w-9 h-9 flex items-center justify-center rounded-xl hover:bg-white/10 text-zinc-400 hover:text-white transition-all active:scale-90"
-                     title="Zoom Out"
-                   >
-                     <Minus size={16} />
-                   </button>
-                   
-                   <button 
-                     onClick={() => rfInstance?.zoomIn()}
-                     className="w-9 h-9 flex items-center justify-center rounded-xl hover:bg-white/10 text-zinc-400 hover:text-white transition-all active:scale-90"
-                     title="Zoom In"
-                   >
-                     <Plus size={16} />
-                   </button>
-
-                   <div className="w-px h-6 bg-white/5"></div>
-
-                   <button 
-                     onClick={() => rfInstance?.fitView()}
-                     className="w-9 h-9 flex items-center justify-center rounded-xl hover:bg-white/10 text-zinc-400 hover:text-white transition-all active:scale-90"
-                     title="Fit View"
-                   >
-                     <Maximize size={16} />
-                   </button>
-
-                   <button 
-                     onClick={() => setIsLocked(!isLocked)}
-                     className={`w-9 h-9 flex items-center justify-center rounded-xl transition-all active:scale-90 ${isLocked ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40' : 'hover:bg-white/10 text-zinc-400 hover:text-white'}`}
-                     title={isLocked ? "Unlock Canvas" : "Lock Canvas"}
-                   >
-                     {isLocked ? <Lock size={16} /> : <Unlock size={16} />}
-                   </button>
-                </div>
-             </div>
-             </>
-          )}
-        </div>
     </div>
   );
 };

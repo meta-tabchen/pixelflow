@@ -1,8 +1,8 @@
 
 import React, { useRef, memo, useState, useEffect, useMemo } from 'react';
-import { Handle, Position, NodeProps, useUpdateNodeInternals, NodeToolbar } from 'reactflow';
+import { Handle, Position, NodeProps, NodeToolbar, useReactFlow, useEdges, useNodes } from 'reactflow';
 import { Node, NodeType, GeneratorModel } from '../../types';
-import { X, Play, Image as ImageIcon, Type, Settings, Maximize2, Loader2, Sparkles, Upload, Video, Layers, Film, Plus, Wand2, ChevronDown, Maximize, Ratio, ArrowUp, Download, Zap, Camera, ScanLine, Pencil, Trash2, CloudUpload, BoxSelect, FolderPlus, Ungroup, LayoutGrid, Circle, Workflow, Aperture, User, ArrowRight, ArrowLeft, RotateCcw, Clock, Move, ZoomIn, Eye, ArrowDown, ScanFace, Mountain, Monitor, LocateFixed, Activity, Target, Contact, ScanEye, Plane, Footprints, Users, Glasses, Smartphone, Vibrate, ArrowUpDown, ArrowLeftRight, AlertCircle, ChevronsUpDown, Cpu, Save, Palette, Star, Copy, Check } from 'lucide-react';
+import { X, Play, Image as ImageIcon, Type, Settings, Maximize2, Loader2, Sparkles, Upload, Video, Layers, Film, Plus, Wand2, ChevronDown, Maximize, Ratio, ArrowUp, Download, Zap, Camera, ScanLine, Pencil, Trash2, CloudUpload, BoxSelect, FolderPlus, Ungroup, LayoutGrid, Circle, Workflow, Aperture, User, ArrowRight, ArrowLeft, RotateCcw, Clock, Move, ZoomIn, Eye, ArrowDown, ScanFace, Mountain, Monitor, LocateFixed, Activity, Target, Contact, ScanEye, Plane, Footprints, Users, Glasses, Smartphone, Vibrate, ArrowUpDown, ArrowLeftRight, AlertCircle, ChevronsUpDown, Cpu, Save, Palette, Star, Copy, Check, MessageSquareText, Link } from 'lucide-react';
 import { optimizePrompt } from '../../services/geminiService';
 
 // --- Shared Styles ---
@@ -106,6 +106,60 @@ const NodeTitle = ({ title, onChange, placeholder = "Untitled" }: { title?: stri
     )
 }
 
+// --- Visual Legend for Input Variables ---
+const InputVariablesLegend = ({ nodeId }: { nodeId: string }) => {
+    // Only fetch edges/nodes when this component is mounted (when parent is selected)
+    // This avoids perf issues for unselected nodes.
+    const { getNodes, getEdges } = useReactFlow();
+    
+    // We use a simplified state here that updates every second or on specific triggers if possible
+    // But since this is only rendered when selected, we can just grab current state.
+    // For real-time updates while dragging *other* nodes, we'd need useNodes() hook, 
+    // but that causes re-renders. Let's try useNodes/useEdges but wrapped to be safe.
+    
+    const edges = useEdges();
+    const nodes = useNodes();
+    
+    const inputs = useMemo(() => {
+        const inputEdges = edges.filter(e => e.target === nodeId);
+        const inputNodes = inputEdges.map(e => nodes.find(n => n.id === e.source)).filter(Boolean) as Node[];
+        
+        // Sort by Y position (Top to Bottom) to match execution logic
+        return inputNodes.sort((a, b) => a.position.y - b.position.y).map((node, index) => ({
+            index,
+            id: node.id,
+            title: node.data.title || node.data.label || "Untitled Node",
+            type: node.type
+        }));
+    }, [edges, nodes, nodeId]);
+
+    if (inputs.length === 0) return null;
+
+    return (
+        <div className="absolute top-full left-4 mt-2 p-2.5 bg-zinc-900/95 backdrop-blur-md rounded-xl border border-white/10 text-[10px] w-64 z-20 shadow-2xl animate-in fade-in slide-in-from-top-1 duration-200 ring-1 ring-black/50">
+             <div className="flex items-center gap-2 font-bold text-zinc-500 uppercase tracking-wider mb-2 px-1 border-b border-white/5 pb-1">
+                 <Link size={10} />
+                 <span>Input Variables</span>
+             </div>
+             <div className="space-y-1.5 max-h-[150px] overflow-y-auto custom-scrollbar">
+                 {inputs.map(input => (
+                     <div key={input.id} className="flex items-center justify-between text-zinc-300 bg-black/40 px-2 py-1.5 rounded border border-white/5 group">
+                         <span className="font-mono text-blue-400 font-bold bg-blue-500/10 px-1 rounded">{"{{"}node {input.index}{"}}"}</span>
+                         <span className="truncate flex-1 text-right text-zinc-400 group-hover:text-white transition-colors ml-2">{input.title}</span>
+                     </div>
+                 ))}
+                 <div className="flex items-center justify-between text-zinc-500 bg-transparent px-2 py-1">
+                     <span className="font-mono font-bold">{"{{"}input{"}}"}</span>
+                     <span>(All Joined)</span>
+                 </div>
+             </div>
+             <div className="mt-2 text-[9px] text-zinc-600 px-1 leading-relaxed">
+                 Use variables in prompt to reference inputs. Order is determined by vertical position (Top to Bottom).
+             </div>
+        </div>
+    );
+};
+
 // --- Group Node ---
 const GroupNode = ({ data, selected, id }: NodeProps) => {
   return (
@@ -161,6 +215,111 @@ const GroupNode = ({ data, selected, id }: NodeProps) => {
       </div>
     </>
   );
+};
+
+// --- Gen Text Node ---
+const GenTextNode = ({ data, selected, id }: NodeProps) => {
+    const isGenerating = data.isLoading;
+    const hasResult = !!data.result;
+    const hasError = !!data.error;
+
+    const statusStyles = useMemo(() => {
+        if (isGenerating) return 'ring-1 ring-amber-500 border-amber-500 shadow-[0_0_30px_-5px_rgba(245,158,11,0.3)]';
+        if (hasError) return 'ring-1 ring-red-500 border-red-500 shadow-[0_0_30px_-5px_rgba(239,68,68,0.3)]';
+        if (selected) return 'ring-1 ring-amber-500/50 shadow-[0_0_50px_-10px_rgba(245,158,11,0.3)]';
+        return 'hover:border-amber-500/50';
+    }, [isGenerating, hasError, selected]);
+
+    return (
+        <div className={`relative group/node ${CARD_BG} ${CARD_BORDER} border ${CARD_RADIUS} w-[360px] shadow-2xl transition-all duration-300 ${statusStyles} overflow-visible`}>
+            {/* Input Variables Legend (Only when selected) */}
+            {selected && <InputVariablesLegend nodeId={id} />}
+
+            {/* Title */}
+            <div className="absolute -top-7 left-1 z-10 flex items-center gap-2">
+                <MessageSquareText size={12} className="text-amber-400" />
+                <NodeTitle title={data.title} onChange={(val) => data.onChange?.(id, { title: val })} placeholder="TEXT GEN" />
+            </div>
+
+            <div className="flex flex-col h-full">
+                 {/* Output Area */}
+                 {hasResult || isGenerating || hasError ? (
+                    <div className="relative w-full border-b border-white/5 bg-black/50 p-4 max-h-[300px] overflow-y-auto custom-scrollbar rounded-t-[24px]">
+                         {isGenerating ? (
+                            <div className="flex items-center gap-2 text-amber-500 animate-pulse py-4">
+                                <Loader2 size={14} className="animate-spin" />
+                                <span className="text-[10px] font-mono">WRITING...</span>
+                            </div>
+                         ) : hasError ? (
+                             <div className="text-red-400 text-xs">{data.error}</div>
+                         ) : (
+                             <div className="text-sm text-zinc-200 whitespace-pre-wrap leading-relaxed">
+                                 {data.result}
+                             </div>
+                         )}
+                         {hasResult && !isGenerating && (
+                             <button 
+                                onClick={() => { navigator.clipboard.writeText(data.result || ''); }}
+                                className="absolute top-2 right-2 p-1.5 bg-black/50 text-zinc-500 hover:text-white rounded-md transition-colors"
+                                title="Copy Text"
+                             >
+                                 <Copy size={12} />
+                             </button>
+                         )}
+                    </div>
+                 ) : null}
+
+                 {/* Input Area */}
+                 <div className={`p-3 space-y-3 ${hasResult ? 'rounded-b-[24px]' : 'rounded-[24px]'}`}>
+                     <textarea 
+                        className="w-full h-24 bg-black/20 border border-white/5 text-sm text-zinc-300 placeholder-zinc-700 rounded-xl resize-none focus:outline-none focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500/50 leading-relaxed p-3 nodrag font-medium transition-all group-hover/input:bg-black/40"
+                        placeholder="Instructions (e.g., Summarize {{node 0}})"
+                        value={data.text || ''}
+                        onChange={(e) => data.onChange?.(id, { text: e.target.value })}
+                        onMouseDown={e => e.stopPropagation()}
+                     />
+                     
+                     <div className="flex items-center justify-between">
+                         {/* Model Select */}
+                         <div className="relative group/model">
+                             <button className="flex items-center gap-1.5 hover:text-amber-400 transition-all nodrag text-[9px] font-bold uppercase tracking-wider text-zinc-500 border border-white/5 px-2 py-1 rounded bg-zinc-900/50 hover:bg-zinc-800 h-7">
+                                 <Zap size={10} className={data.params?.model === GeneratorModel.GEMINI_PRO_TEXT ? "text-purple-400" : "text-amber-500"} />
+                                 <span>{data.params?.model === GeneratorModel.GEMINI_PRO_TEXT ? 'Pro' : 'Flash'}</span>
+                                 <ChevronDown size={10} />
+                             </button>
+                             <select className="absolute inset-0 opacity-0 cursor-pointer nodrag" value={data.params?.model} onChange={(e) => data.onChange?.(id, { params: { ...data.params, model: e.target.value }})}>
+                                 <option value={GeneratorModel.GEMINI_FLASH_TEXT}>Flash</option>
+                                 <option value={GeneratorModel.GEMINI_PRO_TEXT}>Pro</option>
+                             </select>
+                         </div>
+
+                         <div className="flex items-center gap-2">
+                             <button 
+                                onClick={() => data.onDelete?.(id)}
+                                className="w-7 h-7 flex items-center justify-center rounded-lg transition-all nodrag border bg-zinc-900 text-zinc-500 border-white/5 hover:text-red-400 hover:bg-red-500/10 hover:border-red-500/20"
+                             >
+                                <Trash2 size={12} />
+                             </button>
+                             <button 
+                                onClick={() => data.onRun?.(id)}
+                                disabled={isGenerating}
+                                className={`h-7 px-3 rounded-lg flex items-center justify-center gap-1.5 transition-all nodrag font-bold text-[9px] uppercase tracking-widest ${isGenerating ? 'bg-zinc-800 text-zinc-600 border border-white/5' : 'bg-amber-600 hover:bg-amber-500 text-white shadow-lg shadow-amber-900/40 hover:scale-105 active:scale-95 border border-amber-400/20'}`}
+                             >
+                                {isGenerating ? <Loader2 size={12} className="animate-spin" /> : <>Run <ArrowRight size={10} /></>}
+                             </button>
+                         </div>
+                     </div>
+                 </div>
+            </div>
+
+            <Handle type="target" position={Position.Left} className="!w-2.5 !h-5 !rounded-[2px] !border-none !bg-zinc-700 hover:!bg-amber-500 transition-colors" />
+            <Handle 
+                type="source" 
+                position={Position.Right} 
+                className="!w-2.5 !h-5 !rounded-[2px] !border-none !bg-zinc-700 hover:!bg-amber-500" 
+            />
+        </div>
+    );
 };
 
 // --- Gen Image Node ---
@@ -302,6 +461,9 @@ const GenImageNode = ({ data, selected, id }: NodeProps) => {
   return (
     <div className={`relative group/node ${CARD_BG} ${CARD_BORDER} border ${CARD_RADIUS} w-[400px] shadow-2xl transition-all duration-300 ${statusStyles} overflow-visible`}>
       
+      {/* Input Variables Legend (Only when selected) */}
+      {selected && <InputVariablesLegend nodeId={id} />}
+
       {/* Title - Outside Card */}
       <div className="absolute -top-7 left-1 z-10 flex items-center gap-2">
          <Cpu size={12} className={isPro ? "text-purple-400" : "text-blue-400"} />
@@ -390,7 +552,9 @@ const GenImageNode = ({ data, selected, id }: NodeProps) => {
                         </div>
                     ) : (
                         <>
-                            <img src={data.result} alt="Generated" className="w-full h-auto block" />
+                            <div className="w-full bg-zinc-950/50 flex items-center justify-center">
+                                <img src={data.result} alt="Generated" className="max-w-full max-h-[500px] object-contain shadow-sm" />
+                            </div>
                             
                             {/* Overlay Controls */}
                             <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/result:opacity-100 transition-opacity duration-300 flex items-center justify-center backdrop-blur-[2px]">
@@ -435,7 +599,7 @@ const GenImageNode = ({ data, selected, id }: NodeProps) => {
                 <div className="relative group/input">
                     <textarea
                         className="w-full h-24 bg-black/20 border border-white/5 text-sm text-zinc-300 placeholder-zinc-700 rounded-xl resize-none focus:outline-none focus:ring-1 focus:ring-blue-500/50 focus:border-blue-500/50 leading-relaxed p-3 nodrag font-medium transition-all group-hover/input:bg-black/40"
-                        placeholder="Describe your vision or press &quot;/&quot; for shortcuts..."
+                        placeholder="Describe your vision or press &quot;/&quot; for shortcuts... Use {{node 0}} for inputs."
                         value={data.text || ''}
                         onChange={(e) => data.onChange?.(id, { text: e.target.value })}
                         onKeyDown={handleKeyDown}
@@ -634,10 +798,12 @@ const InputImageNode = ({ data, selected, id }: NodeProps) => {
                 <button onClick={() => data.onDelete?.(id)} className="text-zinc-600 hover:text-red-500 transition-colors"><Trash2 size={12} /></button>
             </div>
             
-            <div className="w-full aspect-square bg-black/40 relative group/image">
+            <div className={`w-full bg-black/40 relative group/image ${!data.preview ? 'aspect-square' : ''}`}>
                 {data.preview ? (
                     <>
-                        <img src={data.preview} alt="Input" className="w-full h-full object-cover" />
+                        <div className="w-full flex items-center justify-center bg-zinc-950/50">
+                             <img src={data.preview} alt="Input" className="max-w-full max-h-[280px] object-contain" />
+                        </div>
                          <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/image:opacity-100 transition-opacity flex items-center justify-center gap-3 backdrop-blur-sm">
                             <label className="w-10 h-10 flex items-center justify-center bg-white text-black rounded-full cursor-pointer hover:scale-110 transition-transform">
                                 <Upload size={16} />
@@ -665,6 +831,7 @@ const InputImageNode = ({ data, selected, id }: NodeProps) => {
 
 export const nodeTypes = {
   [NodeType.GEN_IMAGE]: memo(GenImageNode),
+  [NodeType.GEN_TEXT]: memo(GenTextNode), // Registered
   [NodeType.GROUP]: memo(GroupNode),
   [NodeType.INPUT_TEXT]: memo(InputTextNode),
   [NodeType.INPUT_IMAGE]: memo(InputImageNode),

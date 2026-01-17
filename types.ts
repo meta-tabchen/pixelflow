@@ -9,21 +9,23 @@ export enum NodeType {
   PROCESS_GENERATOR = 'PROCESS_GENERATOR',
   OUTPUT_RESULT = 'OUTPUT_RESULT',
   GEN_IMAGE = 'GEN_IMAGE',
-  GROUP = 'GROUP', // New Group Node
+  GEN_TEXT = 'GEN_TEXT', // New Text Gen Node
+  GROUP = 'GROUP', 
 }
 
 export interface NodeData {
   text?: string;
   image?: string; // Base64 (Input or Main Selected Output)
   params?: {
-    aspectRatio: string;
+    aspectRatio?: string;
     model: string;
     imageSize?: string;
     camera?: string; 
     numberOfImages?: number; // New: Batch size
+    temperature?: number; // New for text
   };
-  result?: string; // The "Main" selected image passed to next nodes
-  results?: string[]; // New: All generated images in this batch
+  result?: string; // The "Main" selected image OR generated text
+  results?: string[]; // All generated images in this batch
   error?: string; 
   isLoading?: boolean;
   preview?: string;
@@ -68,6 +70,8 @@ export interface Connection {
 export enum GeneratorModel {
   GEMINI_FLASH_IMAGE = 'gemini-2.5-flash-image',
   GEMINI_PRO_IMAGE = 'gemini-3-pro-image-preview',
+  GEMINI_FLASH_TEXT = 'gemini-3-flash-preview', // New
+  GEMINI_PRO_TEXT = 'gemini-3-pro-preview', // New
 }
 
 export interface GenerateImageParams {
@@ -79,6 +83,12 @@ export interface GenerateImageParams {
   imageSize?: "1K" | "2K" | "4K";
   camera?: string; 
   numberOfImages?: number; // New
+}
+
+export interface GenerateTextParams {
+  prompt: string;
+  images?: string[];
+  model: string;
 }
 
 // --- New Types for Multi-Project & History ---
