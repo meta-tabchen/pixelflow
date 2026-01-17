@@ -161,6 +161,15 @@ export const deleteWorkflowTemplate = async (id: string) => {
     await set(WORKFLOWS_LIBRARY_KEY, updated);
 };
 
+export const updateWorkflowTemplate = async (id: string, updates: Partial<WorkflowTemplate>) => {
+    const library = await getWorkflowTemplates();
+    const index = library.findIndex(t => t.id === id);
+    if (index !== -1) {
+        library[index] = { ...library[index], ...updates };
+        await set(WORKFLOWS_LIBRARY_KEY, library);
+    }
+};
+
 export const clearWorkflow = async () => {
     await del(PROJECTS_INDEX_KEY);
     await del(HISTORY_KEY);

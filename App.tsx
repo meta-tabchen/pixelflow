@@ -5,10 +5,11 @@ import { Dashboard } from './components/Dashboard';
 import { Gallery } from './components/Gallery';
 import { Documentation } from './components/Documentation';
 import { ProjectList } from './components/ProjectList';
+import { WorkflowManager } from './components/WorkflowManager';
 import { SettingsModal } from './components/SettingsModal';
-import { Layers, Image, Layout, Home, Settings as SettingsIcon, BookOpen, Zap, FolderOpen } from 'lucide-react';
+import { Layers, Image, Layout, Home, Settings as SettingsIcon, BookOpen, Zap, FolderOpen, Workflow } from 'lucide-react';
 
-type View = 'home' | 'editor' | 'gallery' | 'docs' | 'projects';
+type View = 'home' | 'editor' | 'gallery' | 'docs' | 'projects' | 'workflows';
 
 const App: React.FC = () => {
   const [view, setView] = useState<View>('home');
@@ -75,28 +76,35 @@ const App: React.FC = () => {
            <div className="flex items-center bg-black/20 p-1.5 rounded-xl border border-white/5 backdrop-blur-md shadow-inner">
                <button 
                   onClick={navigateHome}
-                  className={`flex items-center gap-2 px-6 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide transition-all duration-300 border ${view === 'home' ? 'bg-white/10 text-white shadow-lg border-white/10' : 'border-transparent text-zinc-400 hover:text-white hover:bg-white/5'}`}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide transition-all duration-300 border ${view === 'home' ? 'bg-white/10 text-white shadow-lg border-white/10' : 'border-transparent text-zinc-400 hover:text-white hover:bg-white/5'}`}
                >
                   <Home size={14} />
                   Home
                </button>
                <button 
                   onClick={() => setView('projects')}
-                  className={`flex items-center gap-2 px-6 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide transition-all duration-300 border ${view === 'projects' ? 'bg-white/10 text-white shadow-lg border-white/10' : 'border-transparent text-zinc-400 hover:text-white hover:bg-white/5'}`}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide transition-all duration-300 border ${view === 'projects' ? 'bg-white/10 text-white shadow-lg border-white/10' : 'border-transparent text-zinc-400 hover:text-white hover:bg-white/5'}`}
                >
                   <FolderOpen size={14} />
                   Projects
                </button>
                <button 
+                  onClick={() => setView('workflows')}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide transition-all duration-300 border ${view === 'workflows' ? 'bg-white/10 text-white shadow-lg border-white/10' : 'border-transparent text-zinc-400 hover:text-white hover:bg-white/5'}`}
+               >
+                  <Workflow size={14} />
+                  Workflows
+               </button>
+               <button 
                   onClick={() => setView('gallery')}
-                  className={`flex items-center gap-2 px-6 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide transition-all duration-300 border ${view === 'gallery' ? 'bg-white/10 text-white shadow-lg border-white/10' : 'border-transparent text-zinc-400 hover:text-white hover:bg-white/5'}`}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide transition-all duration-300 border ${view === 'gallery' ? 'bg-white/10 text-white shadow-lg border-white/10' : 'border-transparent text-zinc-400 hover:text-white hover:bg-white/5'}`}
                >
                   <Image size={14} />
                   Gallery
                </button>
                <button 
                   onClick={() => setView('docs')}
-                  className={`flex items-center gap-2 px-6 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide transition-all duration-300 border ${view === 'docs' ? 'bg-white/10 text-white shadow-lg border-white/10' : 'border-transparent text-zinc-400 hover:text-white hover:bg-white/5'}`}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide transition-all duration-300 border ${view === 'docs' ? 'bg-white/10 text-white shadow-lg border-white/10' : 'border-transparent text-zinc-400 hover:text-white hover:bg-white/5'}`}
                >
                   <BookOpen size={14} />
                   Docs
@@ -123,6 +131,10 @@ const App: React.FC = () => {
         
         {view === 'projects' && (
            <ProjectList onOpenProject={navigateToEditor} />
+        )}
+
+        {view === 'workflows' && (
+           <WorkflowManager onOpenProject={navigateToEditor} />
         )}
 
         {view === 'gallery' && (

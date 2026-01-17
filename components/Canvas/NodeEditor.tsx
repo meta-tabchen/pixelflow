@@ -59,7 +59,8 @@ import {
   Copy,
   Scissors,
   Play,
-  Ungroup
+  Ungroup,
+  AlertTriangle
 } from 'lucide-react';
 import { generateImageContent, generateTextContent, isKeyRequired } from '../../services/geminiService';
 import { ImageEditor } from './ImageEditor';
@@ -168,6 +169,12 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
   
   // Context Menu State
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+
+  // Clear Confirmation State
+  const [showClearDialog, setShowClearDialog] = useState(false);
+
+  // Workflow Delete Confirmation State
+  const [workflowDeleteId, setWorkflowDeleteId] = useState<string | null>(null);
 
   // Refs for Access inside Async Functions
   const nodesRef = useRef(nodes);
@@ -783,6 +790,10 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
       setEdges([]);
   }, [setNodes, setEdges]);
   
+  const handleClearClick = useCallback(() => {
+    setShowClearDialog(true);
+  }, []);
+
   const handleAddFromHistory = useCallback((item: HistoryItem) => {
       const centerX = window.innerWidth / 2 - 150; 
       const centerY = window.innerHeight / 2 - 150;
@@ -858,12 +869,64 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
       setActiveMenu(null);
   }, [setNodes, setEdges]);
   
-  const handleDeleteTemplate = async (e: React.MouseEvent, id: string) => {
+  const handleDeleteTemplateClick = (e: React.MouseEvent, id: string) => {
       e.stopPropagation();
-      if(confirm("Delete this workflow template?")) {
-          await deleteWorkflowTemplate(id);
-          getWorkflowTemplates().then(setWorkflowTemplates);
+      setWorkflowDeleteId(id);
+  };
+  
+  const confirmDeleteWorkflow = async () => {
+      if (workflowDeleteId) {
+          await deleteWorkflowTemplate(workflowDeleteId);
+          const updated = await getWorkflowTemplates();
+          setWorkflowTemplates(updated);
+          setWorkflowDeleteId(null);
       }
+  };
+  
+  // --- Import/Export Workflow Logic ---
+  const handleExportTemplate = (e: React.MouseEvent, template: WorkflowTemplate) => {
+      e.stopPropagation();
+      const jsonString = JSON.stringify(template, null, 2);
+      const blob = new Blob([jsonString], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${template.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_workflow.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+  };
+
+  const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+          try {
+              const content = event.target?.result as string;
+              const json = JSON.parse(content);
+              
+              if (!json.nodes || !Array.isArray(json.nodes)) {
+                  alert("Invalid workflow file: Missing nodes.");
+                  return;
+              }
+
+              // Strip ID/Date/etc to clean up for import and ensure unique ID creation in storage
+              const { id, createdAt, ...templateData } = json;
+              
+              await saveWorkflowTemplate(templateData);
+              const updated = await getWorkflowTemplates();
+              setWorkflowTemplates(updated);
+          } catch (err) {
+              console.error("Import failed", err);
+              alert("Failed to import workflow. Invalid JSON.");
+          }
+      };
+      reader.readAsText(file);
+      e.target.value = ''; // Reset input
   };
 
   const handleCopilotAddNodes = useCallback((newNodesData: any[], newConnections: any[]) => {
@@ -1068,6 +1131,77 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
             />
         </ReactFlow>
 
+        {/* Clear Dialog Confirmation Modal */}
+        {showClearDialog && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 shadow-2xl max-w-sm w-full transform scale-100 flex flex-col gap-4 animate-in zoom-in-95 duration-200">
+              <div className="flex items-center gap-3 text-white">
+                 <div className="w-10 h-10 rounded-full bg-red-500/10 flex items-center justify-center text-red-500 border border-red-500/20">
+                    <AlertTriangle size={20} />
+                 </div>
+                 <h3 className="text-lg font-bold">Clear Canvas?</h3>
+              </div>
+              
+              <p className="text-zinc-400 text-sm leading-relaxed">
+                Are you sure you want to delete all nodes and connections? This action cannot be undone.
+              </p>
+              
+              <div className="flex justify-end gap-3 mt-2">
+                <button 
+                  onClick={() => setShowClearDialog(false)}
+                  className="px-4 py-2 rounded-lg text-zinc-300 hover:text-white hover:bg-zinc-800 transition-colors text-sm font-medium border border-transparent hover:border-zinc-700"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={() => {
+                    handleClear();
+                    setShowClearDialog(false);
+                  }}
+                  className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-900/20 text-sm font-bold flex items-center gap-2"
+                >
+                  <Trash2 size={16} />
+                  Clear All
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {/* Workflow Delete Confirmation Modal */}
+        {workflowDeleteId && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setWorkflowDeleteId(null)}>
+            <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 shadow-2xl max-w-sm w-full transform scale-100 flex flex-col gap-4 animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center gap-3 text-white">
+                 <div className="w-10 h-10 rounded-full bg-red-500/10 flex items-center justify-center text-red-500 border border-red-500/20">
+                    <AlertTriangle size={20} />
+                 </div>
+                 <h3 className="text-lg font-bold">Delete Workflow?</h3>
+              </div>
+              
+              <p className="text-zinc-400 text-sm leading-relaxed">
+                Are you sure you want to delete this workflow template from your library?
+              </p>
+              
+              <div className="flex justify-end gap-3 mt-2">
+                <button 
+                  onClick={() => setWorkflowDeleteId(null)}
+                  className="px-4 py-2 rounded-lg text-zinc-300 hover:text-white hover:bg-zinc-800 transition-colors text-sm font-medium border border-transparent hover:border-zinc-700"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={confirmDeleteWorkflow}
+                  className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-900/20 text-sm font-bold flex items-center gap-2"
+                >
+                  <Trash2 size={16} />
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Right Click Context Menu (Simplified, now mostly replaced by Floating Menu but kept for backup/direct delete) */}
         {contextMenu && (
            <div 
@@ -1081,8 +1215,8 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
            </div>
         )}
 
-        {/* Bottom Dock Menu */}
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center gap-4">
+        {/* Bottom Dock Menu - INCREASED Z-INDEX TO z-[60] */}
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-[60] flex flex-col items-center gap-4">
              {/* Sub Menus */}
              {activeMenu === 'add' && (
                  <div className="flex items-center gap-2 bg-zinc-900/90 border border-zinc-700 p-2 rounded-2xl shadow-2xl backdrop-blur-xl animate-in slide-in-from-bottom-2 mb-2">
@@ -1106,7 +1240,6 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
                  </div>
              )}
 
-             {/* ... existing menus for history and workflows ... */}
              {activeMenu === 'history' && (
                  <div className="bg-zinc-900/90 border border-zinc-700 p-3 rounded-2xl shadow-2xl backdrop-blur-xl animate-in slide-in-from-bottom-2 mb-2 w-[400px]">
                       <div className="flex items-center justify-between mb-2 px-1">
@@ -1128,9 +1261,17 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
 
             {activeMenu === 'workflows' && (
                  <div className="bg-zinc-900/90 border border-zinc-700 p-3 rounded-2xl shadow-2xl backdrop-blur-xl animate-in slide-in-from-bottom-2 mb-2 w-[300px]">
-                      <div className="flex items-center justify-between mb-2 px-1">
-                          <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Workflows</span>
-                          <button onClick={() => setActiveMenu(null)}><X size={14} className="text-zinc-500" /></button>
+                      <div className="flex items-center justify-between mb-2 px-1 border-b border-white/5 pb-2">
+                          <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Library</span>
+                          <div className="flex items-center gap-3">
+                              <label className="cursor-pointer text-zinc-500 hover:text-blue-400 transition-colors flex items-center gap-1" title="Import JSON">
+                                  <Upload size={12} />
+                                  <span className="text-[9px] font-bold uppercase">Import</span>
+                                  <input type="file" accept=".json" className="hidden" onChange={handleImportFile} />
+                              </label>
+                              <div className="w-px h-3 bg-white/10"></div>
+                              <button onClick={() => setActiveMenu(null)}><X size={14} className="text-zinc-500 hover:text-white" /></button>
+                          </div>
                       </div>
                       <div className="space-y-2 max-h-[200px] overflow-y-auto custom-scrollbar">
                           {workflowTemplates.length === 0 && <div className="text-center py-4 text-xs text-zinc-500">No saved templates</div>}
@@ -1140,7 +1281,14 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
                                       <div className="text-xs font-bold text-zinc-300 group-hover:text-white">{wf.name}</div>
                                       <div className="text-[9px] text-zinc-500">{wf.nodes.length} nodes</div>
                                   </button>
-                                  <button onClick={(e) => handleDeleteTemplate(e, wf.id)} className="text-zinc-600 hover:text-red-400 p-1"><Trash2 size={12}/></button>
+                                  <div className="flex items-center gap-1">
+                                      <button onClick={(e) => handleExportTemplate(e, wf)} className="text-zinc-600 hover:text-blue-400 p-1.5 hover:bg-white/5 rounded transition-colors" title="Export JSON">
+                                          <Download size={12}/>
+                                      </button>
+                                      <button onClick={(e) => handleDeleteTemplateClick(e, wf.id)} className="text-zinc-600 hover:text-red-400 p-1.5 hover:bg-red-500/10 rounded transition-colors" title="Delete">
+                                          <Trash2 size={12}/>
+                                      </button>
+                                  </div>
                               </div>
                           ))}
                       </div>
@@ -1184,8 +1332,8 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
                  <div className="w-px h-8 bg-zinc-800 mx-1" />
 
                  <button 
-                    onClick={handleClear}
-                    className="w-10 h-10 rounded-full flex items-center justify-center hover:bg-red-500/10 text-zinc-400 hover:text-red-400 transition-all"
+                    onClick={handleClearClick}
+                    className="w-10 h-10 rounded-full flex items-center justify-center transition-all hover:bg-red-500/10 text-zinc-400 hover:text-red-400"
                     title="Clear Canvas"
                  >
                     <Trash2 size={18} />

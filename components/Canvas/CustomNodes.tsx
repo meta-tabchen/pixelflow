@@ -171,38 +171,13 @@ const GroupNode = ({ data, selected, id }: NodeProps) => {
         className="flex items-center justify-center pointer-events-none" 
       >
          <div className="flex items-center bg-black/80 border border-white/10 p-1.5 rounded-full shadow-2xl backdrop-blur-xl animate-in zoom-in-95 duration-300 pointer-events-auto whitespace-nowrap">
-            <div className="flex items-center gap-2 pl-2 pr-3">
+            <div className="flex items-center gap-2 px-2">
                 <div className="w-5 h-5 rounded-full bg-white/5 flex items-center justify-center border border-white/5">
                     <LayoutGrid size={10} className="text-zinc-300" />
                 </div>
                 <NodeTitle title={data.label} onChange={(val) => data.onChange?.(id, { label: val })} placeholder="Group" />
             </div>
-
-            <div className="w-px h-4 bg-white/10 mx-1" />
-
-            <button 
-              onClick={() => data.onRunGroup?.(id)}
-              className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/5 rounded-full text-zinc-300 hover:text-white transition-all text-[10px] font-bold uppercase tracking-wider"
-            >
-               <Play size={10} className="fill-current" />
-               Run Seq
-            </button>
-
-             <button 
-              onClick={() => data.onCreateWorkflow?.(id)}
-              className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/5 rounded-full text-zinc-300 hover:text-white transition-all text-[10px] font-bold uppercase tracking-wider"
-            >
-               <Save size={10} />
-               Save
-            </button>
-            
-            <button 
-              onClick={() => data.onUngroup?.(id)}
-              className="flex items-center gap-2 px-3 py-1.5 hover:bg-red-500/10 rounded-full text-zinc-400 hover:text-red-400 transition-all text-[10px] font-bold uppercase tracking-wider"
-            >
-               <Ungroup size={10} />
-               Ungroup
-            </button>
+            {/* Redundant buttons removed as they are now handled by SelectionOverlay */}
          </div>
       </NodeToolbar>
 
@@ -831,7 +806,7 @@ const InputImageNode = ({ data, selected, id }: NodeProps) => {
 
 export const nodeTypes = {
   [NodeType.GEN_IMAGE]: memo(GenImageNode),
-  [NodeType.GEN_TEXT]: memo(GenTextNode), // Registered
+  [NodeType.GEN_TEXT]: memo(GenTextNode),
   [NodeType.GROUP]: memo(GroupNode),
   [NodeType.INPUT_TEXT]: memo(InputTextNode),
   [NodeType.INPUT_IMAGE]: memo(InputImageNode),
