@@ -1,9 +1,10 @@
 
+
 import React, { useRef, memo, useState, useEffect, useMemo } from 'react';
 import { Handle, Position, NodeProps, NodeToolbar, useReactFlow, useEdges, useNodes } from 'reactflow';
 import { Node, NodeType, GeneratorModel } from '../../types';
-import { X, Play, Image as ImageIcon, Type, Settings, Maximize2, Loader2, Sparkles, Upload, Video, Layers, Film, Plus, Wand2, ChevronDown, Maximize, Ratio, ArrowUp, Download, Zap, Camera, ScanLine, Pencil, Trash2, CloudUpload, BoxSelect, FolderPlus, Ungroup, LayoutGrid, Circle, Workflow, Aperture, User, ArrowRight, ArrowLeft, RotateCcw, Clock, Move, ZoomIn, Eye, ArrowDown, ScanFace, Mountain, Monitor, LocateFixed, Activity, Target, Contact, ScanEye, Plane, Footprints, Users, Glasses, Smartphone, Vibrate, ArrowUpDown, ArrowLeftRight, AlertCircle, ChevronsUpDown, Cpu, Save, Palette, Star, Copy, Check, MessageSquareText, Link } from 'lucide-react';
-import { optimizePrompt } from '../../services/geminiService';
+import { X, Play, Image as ImageIcon, Type, Settings, Maximize2, Loader2, Sparkles, Upload, Video, Layers, Film, Plus, Wand2, ChevronDown, Maximize, Ratio, ArrowUp, Download, Zap, Camera, ScanLine, Pencil, Trash2, CloudUpload, BoxSelect, FolderPlus, Ungroup, LayoutGrid, Circle, Workflow, Aperture, User, ArrowRight, ArrowLeft, RotateCcw, Clock, Move, ZoomIn, Eye, ArrowDown, ScanFace, Mountain, Monitor, LocateFixed, Activity, Target, Contact, ScanEye, Plane, Footprints, Users, Glasses, Smartphone, Vibrate, ArrowUpDown, ArrowLeftRight, AlertCircle, ChevronsUpDown, Cpu, Save, Palette, Star, Copy, Check, MessageSquareText, Link, Globe, ExternalLink, BrainCircuit } from 'lucide-react';
+import { optimizePrompt, fileToBase64 } from '../../services/geminiService';
 
 // --- Shared Styles ---
 const CARD_BG = "bg-zinc-950/90 backdrop-blur-xl"; 
@@ -86,8 +87,9 @@ const NodeTitle = ({ title, onChange, placeholder = "Untitled" }: { title?: stri
                     e.stopPropagation(); 
                     if(e.key === 'Enter') handleCommit(); 
                 }}
-                className="bg-zinc-950 text-white text-xs font-bold px-2 py-1 rounded border border-blue-500 outline-none w-32 min-w-[120px] nodrag shadow-xl font-sans tracking-wide absolute top-0 left-0"
+                className="bg-zinc-950 text-white text-xs font-bold px-2 py-1 rounded border border-blue-500 outline-none w-32 min-w-[120px] nodrag nopan shadow-xl font-sans tracking-wide absolute top-0 left-0"
                 onMouseDown={e => e.stopPropagation()}
+                onWheel={e => e.stopPropagation()}
             />
         )
     }
@@ -108,14 +110,7 @@ const NodeTitle = ({ title, onChange, placeholder = "Untitled" }: { title?: stri
 
 // --- Visual Legend for Input Variables ---
 const InputVariablesLegend = ({ nodeId }: { nodeId: string }) => {
-    // Only fetch edges/nodes when this component is mounted (when parent is selected)
-    // This avoids perf issues for unselected nodes.
     const { getNodes, getEdges } = useReactFlow();
-    
-    // We use a simplified state here that updates every second or on specific triggers if possible
-    // But since this is only rendered when selected, we can just grab current state.
-    // For real-time updates while dragging *other* nodes, we'd need useNodes() hook, 
-    // but that causes re-renders. Let's try useNodes/useEdges but wrapped to be safe.
     
     const edges = useEdges();
     const nodes = useNodes();
@@ -136,12 +131,15 @@ const InputVariablesLegend = ({ nodeId }: { nodeId: string }) => {
     if (inputs.length === 0) return null;
 
     return (
-        <div className="absolute top-full left-4 mt-2 p-2.5 bg-zinc-900/95 backdrop-blur-md rounded-xl border border-white/10 text-[10px] w-64 z-20 shadow-2xl animate-in fade-in slide-in-from-top-1 duration-200 ring-1 ring-black/50">
+        <div 
+          className="absolute top-full left-4 mt-2 p-2.5 bg-zinc-900/95 backdrop-blur-md rounded-xl border border-white/10 text-[10px] w-64 z-20 shadow-2xl animate-in fade-in slide-in-from-top-1 duration-200 ring-1 ring-black/50 nodrag nopan"
+          onWheel={(e) => e.stopPropagation()}
+        >
              <div className="flex items-center gap-2 font-bold text-zinc-500 uppercase tracking-wider mb-2 px-1 border-b border-white/5 pb-1">
                  <Link size={10} />
                  <span>Input Variables</span>
              </div>
-             <div className="space-y-1.5 max-h-[150px] overflow-y-auto custom-scrollbar">
+             <div className="space-y-1.5 max-h-[150px] overflow-y-auto custom-scrollbar nodrag nopan nowheel">
                  {inputs.map(input => (
                      <div key={input.id} className="flex items-center justify-between text-zinc-300 bg-black/40 px-2 py-1.5 rounded border border-white/5 group">
                          <span className="font-mono text-blue-400 font-bold bg-blue-500/10 px-1 rounded">{"{{"}node {input.index}{"}}"}</span>
@@ -177,7 +175,6 @@ const GroupNode = ({ data, selected, id }: NodeProps) => {
                 </div>
                 <NodeTitle title={data.label} onChange={(val) => data.onChange?.(id, { label: val })} placeholder="Group" />
             </div>
-            {/* Redundant buttons removed as they are now handled by SelectionOverlay */}
          </div>
       </NodeToolbar>
 
@@ -192,11 +189,126 @@ const GroupNode = ({ data, selected, id }: NodeProps) => {
   );
 };
 
+// --- Gen Search Node (NEW) ---
+const GenSearchNode = ({ data, selected, id }: NodeProps) => {
+    const isGenerating = data.isLoading;
+    const hasResult = !!data.result;
+    const hasError = !!data.error;
+
+    const statusStyles = useMemo(() => {
+        if (isGenerating) return 'ring-1 ring-emerald-500 border-emerald-500 shadow-[0_0_30px_-5px_rgba(16,185,129,0.3)]';
+        if (hasError) return 'ring-1 ring-red-500 border-red-500 shadow-[0_0_30px_-5px_rgba(239,68,68,0.3)]';
+        if (selected) return 'ring-1 ring-emerald-500/50 shadow-[0_0_50px_-10px_rgba(16,185,129,0.3)]';
+        return 'hover:border-emerald-500/50';
+    }, [isGenerating, hasError, selected]);
+
+    return (
+        <div className={`relative group/node ${CARD_BG} ${CARD_BORDER} border ${CARD_RADIUS} w-[340px] shadow-2xl transition-all duration-300 ${statusStyles} overflow-visible`}>
+             <div className="absolute -top-7 left-1 z-10 flex items-center gap-2">
+                <Globe size={12} className="text-emerald-400" />
+                <NodeTitle title={data.title} onChange={(val) => data.onChange?.(id, { title: val })} placeholder="WEB SEARCH" />
+            </div>
+
+            <div className="flex flex-col h-full">
+                {/* Result Area */}
+                {hasResult || isGenerating || hasError ? (
+                     <div 
+                        className="relative w-full border-b border-white/5 bg-black/50 p-4 max-h-[300px] overflow-y-auto custom-scrollbar rounded-t-[24px] nodrag nopan nowheel"
+                        onWheel={(e) => e.stopPropagation()}
+                     >
+                        {isGenerating ? (
+                             <div className="flex items-center gap-2 text-emerald-500 animate-pulse py-4">
+                                 <Loader2 size={14} className="animate-spin" />
+                                 <span className="text-[10px] font-mono">SEARCHING WEB...</span>
+                             </div>
+                        ) : hasError ? (
+                              <div className="text-red-400 text-xs">{data.error}</div>
+                        ) : (
+                             <div className="space-y-3">
+                                 <div className="text-sm text-zinc-200 whitespace-pre-wrap leading-relaxed">
+                                     {data.result}
+                                 </div>
+                                 {data.searchSources && data.searchSources.length > 0 && (
+                                     <div className="flex flex-wrap gap-1.5 pt-2 border-t border-white/5">
+                                         {data.searchSources.map((source, idx) => (
+                                             <a 
+                                                key={idx}
+                                                href={source.uri}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="flex items-center gap-1.5 px-2 py-1 rounded bg-emerald-500/10 border border-emerald-500/20 text-[9px] text-emerald-300 hover:bg-emerald-500/20 transition-colors max-w-full truncate"
+                                             >
+                                                <ExternalLink size={8} />
+                                                <span className="truncate max-w-[150px]">{source.title}</span>
+                                             </a>
+                                         ))}
+                                     </div>
+                                 )}
+                             </div>
+                        )}
+                     </div>
+                ) : null}
+
+                 {/* Input Area */}
+                 <div className={`p-3 space-y-3 ${hasResult ? 'rounded-b-[24px]' : 'rounded-[24px]'}`}>
+                     <textarea 
+                         className="w-full h-16 bg-black/20 border border-white/5 text-sm text-zinc-300 placeholder-zinc-700 rounded-xl resize-none focus:outline-none focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500/50 leading-relaxed p-3 nodrag nopan nowheel font-medium transition-all group-hover/input:bg-black/40"
+                         placeholder="What do you want to find on the web?"
+                         value={data.text || ''}
+                         onChange={(e) => data.onChange?.(id, { text: e.target.value })}
+                         onMouseDown={e => e.stopPropagation()}
+                         onWheel={(e) => e.stopPropagation()}
+                     />
+                     <div className="flex items-center justify-end gap-2">
+                        <button 
+                            onClick={() => data.onDelete?.(id)}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            className="w-7 h-7 flex items-center justify-center rounded-lg transition-all nodrag border bg-zinc-900 text-zinc-500 border-white/5 hover:text-red-400 hover:bg-red-500/10 hover:border-red-500/20"
+                        >
+                            <Trash2 size={12} />
+                        </button>
+                        <button 
+                            onClick={() => data.onRun?.(id)}
+                            disabled={isGenerating}
+                            className={`h-7 px-3 rounded-lg flex items-center justify-center gap-1.5 transition-all nodrag font-bold text-[9px] uppercase tracking-widest ${isGenerating ? 'bg-zinc-800 text-zinc-600 border border-white/5' : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/40 hover:scale-105 active:scale-95 border border-emerald-400/20'}`}
+                        >
+                            {isGenerating ? <Loader2 size={12} className="animate-spin" /> : <>Search <ArrowRight size={10} /></>}
+                        </button>
+                     </div>
+                 </div>
+            </div>
+            
+            {/* Search only has Source Handle */}
+            <Handle 
+                type="source" 
+                position={Position.Right} 
+                className="!w-2.5 !h-5 !rounded-[2px] !border-none !bg-zinc-700 hover:!bg-emerald-500" 
+            />
+            
+            {/* Add Next Step Handle */}
+            <Handle 
+                type="source" 
+                position={Position.Right} 
+                className="!w-6 !h-6 !bg-emerald-600 !border-2 !border-black !flex !items-center !justify-center !rounded-full !shadow-[0_0_10px_rgba(16,185,129,0.5)] -right-3 z-50 cursor-crosshair group/handle"
+            >
+                <Plus size={10} className="text-white pointer-events-none" />
+                <div className="absolute left-full ml-2 px-2 py-1 bg-black/80 text-white text-[9px] rounded opacity-0 group-hover/handle:opacity-100 whitespace-nowrap pointer-events-none">
+                    Drag to Connect
+                </div>
+            </Handle>
+        </div>
+    );
+}
+
 // --- Gen Text Node ---
 const GenTextNode = ({ data, selected, id }: NodeProps) => {
     const isGenerating = data.isLoading;
     const hasResult = !!data.result;
     const hasError = !!data.error;
+
+    // Show Thinking Controls? (Only 2.5/3 models)
+    const canThink = true; 
+    const [showThinking, setShowThinking] = useState(false);
 
     const statusStyles = useMemo(() => {
         if (isGenerating) return 'ring-1 ring-amber-500 border-amber-500 shadow-[0_0_30px_-5px_rgba(245,158,11,0.3)]';
@@ -219,7 +331,10 @@ const GenTextNode = ({ data, selected, id }: NodeProps) => {
             <div className="flex flex-col h-full">
                  {/* Output Area */}
                  {hasResult || isGenerating || hasError ? (
-                    <div className="relative w-full border-b border-white/5 bg-black/50 p-4 max-h-[300px] overflow-y-auto custom-scrollbar rounded-t-[24px]">
+                    <div 
+                        className="relative w-full border-b border-white/5 bg-black/50 p-4 max-h-[300px] overflow-y-auto custom-scrollbar rounded-t-[24px] nodrag nopan nowheel"
+                        onWheel={(e) => e.stopPropagation()}
+                     >
                          {isGenerating ? (
                             <div className="flex items-center gap-2 text-amber-500 animate-pulse py-4">
                                 <Loader2 size={14} className="animate-spin" />
@@ -247,30 +362,61 @@ const GenTextNode = ({ data, selected, id }: NodeProps) => {
                  {/* Input Area */}
                  <div className={`p-3 space-y-3 ${hasResult ? 'rounded-b-[24px]' : 'rounded-[24px]'}`}>
                      <textarea 
-                        className="w-full h-24 bg-black/20 border border-white/5 text-sm text-zinc-300 placeholder-zinc-700 rounded-xl resize-none focus:outline-none focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500/50 leading-relaxed p-3 nodrag font-medium transition-all group-hover/input:bg-black/40"
+                        className="w-full h-24 bg-black/20 border border-white/5 text-sm text-zinc-300 placeholder-zinc-700 rounded-xl resize-none focus:outline-none focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500/50 leading-relaxed p-3 nodrag nopan nowheel font-medium transition-all group-hover/input:bg-black/40"
                         placeholder="Instructions (e.g., Summarize {{node 0}})"
                         value={data.text || ''}
                         onChange={(e) => data.onChange?.(id, { text: e.target.value })}
                         onMouseDown={e => e.stopPropagation()}
+                        onWheel={(e) => e.stopPropagation()}
                      />
+
+                     {showThinking && canThink && (
+                        <div className="animate-in slide-in-from-top-2 fade-in">
+                            <div className="flex items-center justify-between mb-1">
+                                <span className="text-[10px] font-bold text-amber-500 uppercase">Thinking Budget</span>
+                                <span className="text-[10px] text-zinc-500 font-mono">{data.params?.thinkingBudget || 0} tokens</span>
+                            </div>
+                            <input 
+                                type="range" 
+                                min="0" 
+                                max="8192" 
+                                step="128"
+                                value={data.params?.thinkingBudget || 0}
+                                onChange={(e) => data.onChange?.(id, { params: { ...data.params, thinkingBudget: parseInt(e.target.value) } })}
+                                className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-amber-500 nodrag nopan nowheel"
+                                onWheel={(e) => e.stopPropagation()}
+                            />
+                        </div>
+                     )}
                      
                      <div className="flex items-center justify-between">
                          {/* Model Select */}
-                         <div className="relative group/model">
-                             <button className="flex items-center gap-1.5 hover:text-amber-400 transition-all nodrag text-[9px] font-bold uppercase tracking-wider text-zinc-500 border border-white/5 px-2 py-1 rounded bg-zinc-900/50 hover:bg-zinc-800 h-7">
-                                 <Zap size={10} className={data.params?.model === GeneratorModel.GEMINI_PRO_TEXT ? "text-purple-400" : "text-amber-500"} />
-                                 <span>{data.params?.model === GeneratorModel.GEMINI_PRO_TEXT ? 'Pro' : 'Flash'}</span>
-                                 <ChevronDown size={10} />
-                             </button>
-                             <select className="absolute inset-0 opacity-0 cursor-pointer nodrag" value={data.params?.model} onChange={(e) => data.onChange?.(id, { params: { ...data.params, model: e.target.value }})}>
-                                 <option value={GeneratorModel.GEMINI_FLASH_TEXT}>Flash</option>
-                                 <option value={GeneratorModel.GEMINI_PRO_TEXT}>Pro</option>
-                             </select>
+                         <div className="flex items-center gap-1.5">
+                            <div className="relative group/model">
+                                <button className="flex items-center gap-1.5 hover:text-amber-400 transition-all nodrag text-[9px] font-bold uppercase tracking-wider text-zinc-500 border border-white/5 px-2 py-1 rounded bg-zinc-900/50 hover:bg-zinc-800 h-7">
+                                    <Zap size={10} className={data.params?.model === GeneratorModel.GEMINI_PRO_TEXT ? "text-purple-400" : "text-amber-500"} />
+                                    <span>{data.params?.model === GeneratorModel.GEMINI_PRO_TEXT ? 'Pro' : 'Flash'}</span>
+                                    <ChevronDown size={10} />
+                                </button>
+                                <select className="absolute inset-0 opacity-0 cursor-pointer nodrag" value={data.params?.model} onChange={(e) => data.onChange?.(id, { params: { ...data.params, model: e.target.value }})}>
+                                    <option value={GeneratorModel.GEMINI_FLASH_TEXT}>Flash</option>
+                                    <option value={GeneratorModel.GEMINI_PRO_TEXT}>Pro</option>
+                                </select>
+                            </div>
+
+                            <button 
+                                onClick={() => setShowThinking(!showThinking)}
+                                className={`h-7 w-7 flex items-center justify-center rounded transition-colors ${showThinking || (data.params?.thinkingBudget && data.params.thinkingBudget > 0) ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20' : 'text-zinc-500 hover:text-amber-400 hover:bg-zinc-800'}`}
+                                title="Thinking Config"
+                            >
+                                <BrainCircuit size={12} />
+                            </button>
                          </div>
 
                          <div className="flex items-center gap-2">
                              <button 
                                 onClick={() => data.onDelete?.(id)}
+                                onMouseDown={(e) => e.stopPropagation()}
                                 className="w-7 h-7 flex items-center justify-center rounded-lg transition-all nodrag border bg-zinc-900 text-zinc-500 border-white/5 hover:text-red-400 hover:bg-red-500/10 hover:border-red-500/20"
                              >
                                 <Trash2 size={12} />
@@ -288,11 +434,18 @@ const GenTextNode = ({ data, selected, id }: NodeProps) => {
             </div>
 
             <Handle type="target" position={Position.Left} className="!w-2.5 !h-5 !rounded-[2px] !border-none !bg-zinc-700 hover:!bg-amber-500 transition-colors" />
+            
+            {/* Add Next Step Handle */}
             <Handle 
                 type="source" 
                 position={Position.Right} 
-                className="!w-2.5 !h-5 !rounded-[2px] !border-none !bg-zinc-700 hover:!bg-amber-500" 
-            />
+                className="!w-6 !h-6 !bg-amber-600 !border-2 !border-black !flex !items-center !justify-center !rounded-full !shadow-[0_0_10px_rgba(245,158,11,0.5)] -right-3 z-50 cursor-crosshair group/handle"
+            >
+                <Plus size={10} className="text-white pointer-events-none" />
+                <div className="absolute left-full ml-2 px-2 py-1 bg-black/80 text-white text-[9px] rounded opacity-0 group-hover/handle:opacity-100 whitespace-nowrap pointer-events-none">
+                     Drag to Connect
+                </div>
+            </Handle>
         </div>
     );
 };
@@ -447,7 +600,11 @@ const GenImageNode = ({ data, selected, id }: NodeProps) => {
 
       {/* Camera Panel */}
       {showCameraPanel && (
-           <div className="absolute bottom-14 -right-12 z-[100] w-[340px] max-h-[400px] overflow-y-auto custom-scrollbar glass-panel bg-black/95 rounded-2xl shadow-2xl p-5 animate-in slide-in-from-bottom-2 fade-in duration-200 flex flex-col gap-5 cursor-default border border-white/10 origin-bottom-right" onMouseDown={e => e.stopPropagation()}>
+           <div 
+              className="absolute bottom-14 -right-12 z-[100] w-[340px] max-h-[400px] overflow-y-auto custom-scrollbar glass-panel bg-black/95 rounded-2xl shadow-2xl p-5 animate-in slide-in-from-bottom-2 fade-in duration-200 flex flex-col gap-5 cursor-default border border-white/10 origin-bottom-right nodrag nopan nowheel"
+              onMouseDown={e => e.stopPropagation()}
+              onWheel={(e) => e.stopPropagation()}
+            >
                 <div className="flex items-center justify-between border-b border-white/5 pb-2">
                     <span className="text-[10px] font-bold tracking-[0.2em] text-zinc-500 uppercase">Camera Control</span>
                     <button onClick={() => data.onChange?.(id, { params: { ...data.params, camera: undefined }})} className="text-[9px] font-mono text-red-400 hover:text-red-300 transition-colors">RESET</button>
@@ -507,7 +664,11 @@ const GenImageNode = ({ data, selected, id }: NodeProps) => {
             ) : (
                 <div className="relative w-full group/image-area">
                     {gridView ? (
-                        <div className="w-full max-h-[320px] overflow-y-auto custom-scrollbar bg-zinc-900 p-2 grid grid-cols-2 gap-2" onClick={e => e.stopPropagation()}>
+                        <div 
+                            className="w-full max-h-[320px] overflow-y-auto custom-scrollbar bg-zinc-900 p-2 grid grid-cols-2 gap-2 nodrag nopan nowheel" 
+                            onClick={e => e.stopPropagation()}
+                            onWheel={(e) => e.stopPropagation()}
+                        >
                             {allResults.map((img, idx) => (
                                 <div 
                                     key={idx} 
@@ -573,20 +734,24 @@ const GenImageNode = ({ data, selected, id }: NodeProps) => {
             <div className={`flex flex-col animate-in fade-in slide-in-from-top-2 duration-300 ease-out p-3 gap-3 ${!showTopSection ? 'rounded-[24px]' : 'rounded-b-[24px]'}`}>
                 <div className="relative group/input">
                     <textarea
-                        className="w-full h-24 bg-black/20 border border-white/5 text-sm text-zinc-300 placeholder-zinc-700 rounded-xl resize-none focus:outline-none focus:ring-1 focus:ring-blue-500/50 focus:border-blue-500/50 leading-relaxed p-3 nodrag font-medium transition-all group-hover/input:bg-black/40"
+                        className="w-full h-24 bg-black/20 border border-white/5 text-sm text-zinc-300 placeholder-zinc-700 rounded-xl resize-none focus:outline-none focus:ring-1 focus:ring-blue-500/50 focus:border-blue-500/50 leading-relaxed p-3 nodrag nopan nowheel font-medium transition-all group-hover/input:bg-black/40"
                         placeholder="Describe your vision or press &quot;/&quot; for shortcuts... Use {{node 0}} for inputs."
                         value={data.text || ''}
                         onChange={(e) => data.onChange?.(id, { text: e.target.value })}
                         onKeyDown={handleKeyDown}
                         onMouseDown={(e) => e.stopPropagation()} 
+                        onWheel={(e) => e.stopPropagation()}
                     />
                 
                     {showCommands && (
-                        <div className="absolute bottom-full left-0 w-full mb-2 bg-[#18181b] rounded-xl shadow-2xl overflow-hidden z-[100] animate-in slide-in-from-bottom-2 duration-200 border border-white/10 ring-1 ring-white/10">
+                        <div className="absolute bottom-full left-0 w-full mb-2 bg-[#18181b] rounded-xl shadow-2xl overflow-hidden z-[100] animate-in slide-in-from-bottom-2 duration-200 border border-white/10 ring-1 ring-white/10 nodrag nopan nowheel" onWheel={(e) => e.stopPropagation()}>
                             <div className="px-3 py-2 border-b border-white/5 bg-white/5">
                                 <span className="text-[9px] font-bold text-blue-400 uppercase tracking-widest">Quick Presets</span>
                             </div>
-                            <div className="max-h-[200px] overflow-y-auto custom-scrollbar">
+                            <div 
+                                className="max-h-[200px] overflow-y-auto custom-scrollbar nodrag nopan nowheel"
+                                onWheel={(e) => e.stopPropagation()}
+                            >
                                 {SLASH_COMMANDS.map((cmd, index) => (
                                     <button
                                         key={cmd.id}
@@ -692,6 +857,7 @@ const GenImageNode = ({ data, selected, id }: NodeProps) => {
                          {/* Delete */}
                         <button 
                             onClick={() => data.onDelete?.(id)}
+                            onMouseDown={(e) => e.stopPropagation()}
                             className="w-7 h-7 flex items-center justify-center rounded-lg transition-all nodrag border bg-zinc-900 text-zinc-500 border-white/5 hover:text-red-400 hover:bg-red-500/10 hover:border-red-500/20"
                             title="Delete Node"
                         >
@@ -713,102 +879,81 @@ const GenImageNode = ({ data, selected, id }: NodeProps) => {
       </div>
 
       <Handle type="target" position={Position.Left} className="!w-2.5 !h-5 !rounded-[2px] !border-none !bg-zinc-700 hover:!bg-blue-500 transition-colors" />
-      {/* Improved Source Handle with pointer-events-none on icon to fix drag */}
+      
+      {/* Improved Source Handle - Fixed Click vs Drag */}
       <Handle 
         type="source" 
         position={Position.Right} 
-        onClick={() => data.onAddNext?.(id)}
-        className="!w-6 !h-6 !bg-blue-600 !border-2 !border-black !flex !items-center !justify-center !rounded-full !shadow-[0_0_10px_rgba(37,99,235,0.5)] !opacity-100 !transition-all !-right-3 hover:!scale-125 z-50 cursor-pointer"
-        title="Add Next Node"
+        className="!w-6 !h-6 !bg-blue-600 !border-2 !border-black !flex !items-center !justify-center !rounded-full !shadow-[0_0_10px_rgba(37,99,235,0.5)] -right-3 z-50 cursor-crosshair group/handle"
       >
-        <Plus size={12} className="text-white pointer-events-none" strokeWidth={3} />
+        <Plus size={10} className="text-white pointer-events-none" />
+        <div className="absolute left-full ml-2 px-2 py-1 bg-black/80 text-white text-[9px] rounded opacity-0 group-hover/handle:opacity-100 whitespace-nowrap pointer-events-none">
+            Drag to Connect
+        </div>
       </Handle>
     </div>
   );
 };
 
-const InputTextNode = ({ data, selected, id }: NodeProps) => {
-  return (
-    <div className={`relative group/node ${CARD_BG} ${CARD_BORDER} border ${CARD_RADIUS} w-[300px] min-h-[160px] shadow-2xl transition-all duration-300 ${selected ? 'ring-1 ring-blue-500/50 scale-[1.02]' : CARD_HOVER_BORDER} flex flex-col overflow-hidden`}>
-      <div className="p-4 border-b border-white/5 flex items-center justify-between bg-zinc-900/30">
-          <div className="flex items-center gap-2">
-             <Type size={12} className="text-blue-400" />
-             <NodeTitle title={data.title} onChange={(val) => data.onChange?.(id, { title: val })} placeholder="TEXT ASSET" />
-          </div>
-          <button onClick={() => data.onDelete?.(id)} className="text-zinc-600 hover:text-red-500 transition-colors"><Trash2 size={12} /></button>
-      </div>
-      <textarea
-        className="w-full h-full flex-1 bg-transparent border-none text-sm text-zinc-300 placeholder-zinc-700 focus:outline-none focus:bg-white/5 p-4 resize-none nodrag leading-relaxed font-medium"
-        placeholder="Enter raw text prompt components..."
-        value={data.text || ''}
-        onChange={(e) => data.onChange?.(id, { text: e.target.value })}
-        onMouseDown={(e) => e.stopPropagation()}
-      />
-      <Handle type="source" position={Position.Right} className="!w-2.5 !h-5 !rounded-[2px] !border-none !bg-zinc-700 hover:!bg-blue-500" />
-    </div>
-  );
-};
+const InputTextNode = ({ data, id }: NodeProps) => {
+    return (
+        <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-3 min-w-[200px] shadow-lg">
+             <div className="flex items-center gap-2 mb-2 text-zinc-400 text-xs font-bold uppercase tracking-wider">
+                 <Type size={12} />
+                 <NodeTitle title={data.title} onChange={(val) => data.onChange?.(id, { title: val })} placeholder="INPUT TEXT" />
+             </div>
+             <textarea 
+                className="w-full bg-black/30 border border-white/5 rounded-lg p-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-blue-500/50 resize-y nodrag nowheel"
+                value={data.text || ''}
+                onChange={(e) => data.onChange?.(id, { text: e.target.value })}
+                placeholder="Enter text..."
+                onMouseDown={e => e.stopPropagation()}
+                onWheel={e => e.stopPropagation()}
+             />
+             <Handle type="source" position={Position.Right} className="!bg-zinc-500" />
+        </div>
+    )
+}
 
-const InputImageNode = ({ data, selected, id }: NodeProps) => {
-    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+const InputImageNode = ({ data, id }: NodeProps) => {
+    const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
-            const file = e.target.files[0];
-            const reader = new FileReader();
-            reader.onload = () => {
-                const result = reader.result as string;
-                const base64 = result.split(',')[1];
-                data.onChange?.(id, { image: base64, preview: result });
-            };
-            reader.readAsDataURL(file);
+             const file = e.target.files[0];
+             try {
+                const base64 = await fileToBase64(file);
+                const fullData = `data:${file.type};base64,${base64}`;
+                data.onChange?.(id, { image: fullData, result: fullData });
+             } catch(e) { console.error(e); }
         }
     };
 
     return (
-        <div className={`relative group/node ${CARD_BG} ${CARD_BORDER} border ${CARD_RADIUS} w-[280px] shadow-2xl transition-all duration-300 ${selected ? 'ring-1 ring-blue-500/50 scale-[1.02]' : CARD_HOVER_BORDER} overflow-hidden`}>
-            <div className="p-4 border-b border-white/5 flex items-center justify-between bg-zinc-900/30">
-                <div className="flex items-center gap-2">
-                   <ImageIcon size={12} className="text-purple-400" />
-                   <NodeTitle title={data.title} onChange={(val) => data.onChange?.(id, { title: val })} placeholder="IMAGE ASSET" />
-                </div>
-                <button onClick={() => data.onDelete?.(id)} className="text-zinc-600 hover:text-red-500 transition-colors"><Trash2 size={12} /></button>
-            </div>
-            
-            <div className={`w-full bg-black/40 relative group/image ${!data.preview ? 'aspect-square' : ''}`}>
-                {data.preview ? (
-                    <>
-                        <div className="w-full flex items-center justify-center bg-zinc-950/50">
-                             <img src={data.preview} alt="Input" className="max-w-full max-h-[280px] object-contain" />
-                        </div>
-                         <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/image:opacity-100 transition-opacity flex items-center justify-center gap-3 backdrop-blur-sm">
-                            <label className="w-10 h-10 flex items-center justify-center bg-white text-black rounded-full cursor-pointer hover:scale-110 transition-transform">
-                                <Upload size={16} />
-                                <input type="file" className="hidden" accept="image/*" onChange={handleFileChange} />
-                            </label>
-                             <button onClick={() => data.onChange?.(id, { image: undefined, preview: undefined })} className="w-10 h-10 flex items-center justify-center bg-red-500 text-white rounded-full hover:scale-110 transition-transform"><X size={16}/></button>
-                         </div>
-                    </>
-                ) : (
-                    <label className="flex flex-col items-center justify-center w-full h-full cursor-pointer hover:bg-white/5 transition-all gap-4 text-zinc-700 hover:text-blue-500 group/upload">
-                        <div className="w-12 h-12 rounded-xl bg-zinc-900 flex items-center justify-center border border-white/5 group-hover/upload:border-blue-500/30 group-hover/upload:bg-blue-500/10 transition-all">
-                            <CloudUpload size={20} />
-                        </div>
-                        <span className="text-[10px] font-bold uppercase tracking-[0.2em]">Upload Source</span>
-                        <input type="file" className="hidden" accept="image/*" onChange={handleFileChange} />
-                    </label>
-                )}
-            </div>
-            
-            <Handle type="source" position={Position.Right} className="!w-2.5 !h-5 !rounded-[2px] !border-none !bg-zinc-700" />
-            <Handle type="target" position={Position.Left} className="!w-2.5 !h-5 !rounded-[2px] !border-none !bg-zinc-700" />
+        <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-3 min-w-[200px] shadow-lg">
+             <div className="flex items-center gap-2 mb-2 text-zinc-400 text-xs font-bold uppercase tracking-wider">
+                 <ImageIcon size={12} />
+                 <NodeTitle title={data.title} onChange={(val) => data.onChange?.(id, { title: val })} placeholder="INPUT IMAGE" />
+             </div>
+             <div className="relative aspect-video bg-black/30 border border-white/5 rounded-lg flex items-center justify-center overflow-hidden group">
+                 {data.image ? (
+                     <img src={data.image} className="w-full h-full object-contain" />
+                 ) : (
+                     <div className="text-center p-4">
+                         <Upload size={20} className="mx-auto mb-2 text-zinc-600" />
+                         <span className="text-[10px] text-zinc-500">Upload Image</span>
+                     </div>
+                 )}
+                 <input type="file" accept="image/*" onChange={handleFileChange} className="absolute inset-0 opacity-0 cursor-pointer" />
+             </div>
+             <Handle type="source" position={Position.Right} className="!bg-zinc-500" />
         </div>
     )
 }
 
 export const nodeTypes = {
-  [NodeType.GEN_IMAGE]: memo(GenImageNode),
-  [NodeType.GEN_TEXT]: memo(GenTextNode),
-  [NodeType.GROUP]: memo(GroupNode),
-  [NodeType.INPUT_TEXT]: memo(InputTextNode),
-  [NodeType.INPUT_IMAGE]: memo(InputImageNode),
-  [NodeType.UPLOAD_IMAGE]: memo(InputImageNode),
+  [NodeType.GEN_IMAGE]: GenImageNode,
+  [NodeType.GEN_TEXT]: GenTextNode,
+  [NodeType.GEN_SEARCH]: GenSearchNode,
+  [NodeType.GROUP]: GroupNode,
+  [NodeType.INPUT_TEXT]: InputTextNode,
+  [NodeType.INPUT_IMAGE]: InputImageNode,
 };

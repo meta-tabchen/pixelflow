@@ -9,7 +9,8 @@ export enum NodeType {
   PROCESS_GENERATOR = 'PROCESS_GENERATOR',
   OUTPUT_RESULT = 'OUTPUT_RESULT',
   GEN_IMAGE = 'GEN_IMAGE',
-  GEN_TEXT = 'GEN_TEXT', // New Text Gen Node
+  GEN_TEXT = 'GEN_TEXT', 
+  GEN_SEARCH = 'GEN_SEARCH', // New Search Node
   GROUP = 'GROUP', 
 }
 
@@ -21,11 +22,13 @@ export interface NodeData {
     model: string;
     imageSize?: string;
     camera?: string; 
-    numberOfImages?: number; // New: Batch size
-    temperature?: number; // New for text
+    numberOfImages?: number;
+    temperature?: number; 
+    thinkingBudget?: number; // New: Thinking capability
   };
   result?: string; // The "Main" selected image OR generated text
   results?: string[]; // All generated images in this batch
+  searchSources?: { uri: string; title: string }[]; // New: Grounding sources
   error?: string; 
   isLoading?: boolean;
   preview?: string;
@@ -47,17 +50,17 @@ export interface NodeData {
 
 export interface Node {
   id: string;
-  type: NodeType | string; 
+  type?: NodeType | string; 
   x?: number;
   y?: number;
   position: { x: number; y: number }; 
   data: NodeData;
   title?: string;
   parentNode?: string;
-  extent?: 'parent';
+  extent?: 'parent' | [[number, number], [number, number]];
   style?: React.CSSProperties;
-  width?: number;
-  height?: number;
+  width?: number | null;
+  height?: number | null;
   selected?: boolean;
 }
 
@@ -70,8 +73,8 @@ export interface Connection {
 export enum GeneratorModel {
   GEMINI_FLASH_IMAGE = 'gemini-2.5-flash-image',
   GEMINI_PRO_IMAGE = 'gemini-3-pro-image-preview',
-  GEMINI_FLASH_TEXT = 'gemini-3-flash-preview', // New
-  GEMINI_PRO_TEXT = 'gemini-3-pro-preview', // New
+  GEMINI_FLASH_TEXT = 'gemini-3-flash-preview', 
+  GEMINI_PRO_TEXT = 'gemini-3-pro-preview', 
 }
 
 export interface GenerateImageParams {
@@ -82,13 +85,18 @@ export interface GenerateImageParams {
   aspectRatio?: string; 
   imageSize?: "1K" | "2K" | "4K";
   camera?: string; 
-  numberOfImages?: number; // New
+  numberOfImages?: number; 
 }
 
 export interface GenerateTextParams {
   prompt: string;
   images?: string[];
   model: string;
+  thinkingBudget?: number;
+}
+
+export interface GenerateSearchParams {
+  query: string;
 }
 
 // --- New Types for Multi-Project & History ---

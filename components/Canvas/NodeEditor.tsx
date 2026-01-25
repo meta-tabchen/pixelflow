@@ -10,15 +10,20 @@ import ReactFlow, {
   Edge,
   Node,
   BackgroundVariant,
-  getRectOfNodes,
+  getNodesBounds, // Updated from getRectOfNodes
   SelectionMode,
   ReactFlowProvider,
   useReactFlow,
   OnSelectionChangeParams,
   ReactFlowInstance,
   NodeMouseHandler,
-  useViewport
+  useViewport,
+  Panel,
+  Controls,
+  OnConnectStart,
+  OnConnectEnd
 } from 'reactflow';
+import dagre from 'dagre';
 import { NodeType, GeneratorModel, HistoryItem, ProjectMeta, WorkflowTemplate, NodeData } from '../../types';
 import { nodeTypes } from './CustomNodes';
 import { DeletableEdge } from './CustomEdges';
@@ -26,43 +31,28 @@ import {
   Plus, 
   Trash2, 
   Image as ImageIcon, 
-  Upload, 
-  FolderOpen, 
-  Network, 
-  MessageSquare,
-  Clock,
-  Images,
-  Shapes,
   Type, 
-  Video, 
-  Music, 
   X,
-  Scan,
-  HelpCircle,
   BoxSelect,
   Grid,
-  ChevronRight,
   Pencil,
-  Check,
-  Download,
-  Share2,
-  Cpu,
   Save,
-  Minus,
   Maximize,
-  Lock,
-  Unlock,
   ArrowLeft,
   Sparkles,
   Workflow,
   MessageSquareText,
-  Copy,
-  Scissors,
   Play,
   Ungroup,
-  AlertTriangle
+  Globe,
+  Copy,
+  LayoutGrid,
+  History,
+  LayoutTemplate,
+  AlignStartVertical,
+  Wand
 } from 'lucide-react';
-import { generateImageContent, generateTextContent, isKeyRequired } from '../../services/geminiService';
+import { generateImageContent, generateTextContent, generateSearchContent, isKeyRequired } from '../../services/geminiService';
 import { ImageEditor } from './ImageEditor';
 import { WorkflowModal } from './WorkflowModal';
 import { CopilotSidebar } from './CopilotSidebar';
@@ -72,26 +62,250 @@ const edgeTypes = {
   deletable: DeletableEdge,
 };
 
+// --- Auto Layout Logic ---
+const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'LR') => {
+  const dagreGraph = new dagre.graphlib.Graph();
+  dagreGraph.setDefaultEdgeLabel(() => ({}));
+
+  // Average node size (Generator Nodes are wider, Inputs are smaller, we take a safe max)
+  const nodeWidth = 420;
+  const nodeHeight = 500;
+
+  dagreGraph.setGraph({ 
+    rankdir: direction,
+    nodesep: 50, // Vertical spacing between nodes in same rank
+    ranksep: 150  // Horizontal spacing between ranks
+  });
+
+  nodes.forEach((node) => {
+    // Determine dimensions based on type if possible, otherwise default
+    let width = nodeWidth;
+    let height = nodeHeight;
+    
+    if (node.type === NodeType.INPUT_TEXT || node.type === NodeType.INPUT_IMAGE) {
+        width = 250;
+        height = 300;
+    }
+
+    dagreGraph.setNode(node.id, { width, height });
+  });
+
+  edges.forEach((edge) => {
+    dagreGraph.setEdge(edge.source, edge.target);
+  });
+
+  dagre.layout(dagreGraph);
+
+  const layoutedNodes = nodes.map((node) => {
+    const nodeWithPosition = dagreGraph.node(node.id);
+    return {
+      ...node,
+      // We are shifting the dagre node position (anchor=center center) to the top left
+      // so it matches React Flow's anchor point (top left).
+      position: {
+        x: nodeWithPosition.x - (nodeWidth / 2),
+        y: nodeWithPosition.y - (nodeHeight / 2),
+      },
+    };
+  });
+
+  return { nodes: layoutedNodes, edges };
+};
+
+// --- Context Menu Component ---
+const ContextMenu = ({ 
+  x, 
+  y, 
+  onClose, 
+  onAddNode,
+  onAutoLayout
+}: { 
+  x: number, 
+  y: number, 
+  onClose: () => void, 
+  onAddNode: (type: NodeType) => void,
+  onAutoLayout: () => void
+}) => {
+  useEffect(() => {
+    const handleClick = () => onClose();
+    window.addEventListener('click', handleClick);
+    return () => window.removeEventListener('click', handleClick);
+  }, [onClose]);
+
+  const menuItems = [
+    { label: 'Image Gen', type: NodeType.GEN_IMAGE, icon: Sparkles, color: 'text-blue-400' },
+    { label: 'Text Gen', type: NodeType.GEN_TEXT, icon: MessageSquareText, color: 'text-amber-400' },
+    { label: 'Web Search', type: NodeType.GEN_SEARCH, icon: Globe, color: 'text-emerald-400' },
+    { type: 'divider' },
+    { label: 'Input Text', type: NodeType.INPUT_TEXT, icon: Type, color: 'text-zinc-400' },
+    { label: 'Input Image', type: NodeType.INPUT_IMAGE, icon: ImageIcon, color: 'text-purple-400' },
+    { label: 'Group', type: NodeType.GROUP, icon: LayoutGrid, color: 'text-zinc-500' },
+  ];
+
+  return (
+    <div 
+      className="absolute z-[100] bg-[#18181b] border border-white/10 rounded-xl shadow-2xl p-1.5 min-w-[180px] animate-in zoom-in-95 duration-100 origin-top-left overflow-hidden backdrop-blur-md"
+      style={{ top: y, left: x }}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      <div className="px-2 py-1.5 text-[10px] font-bold text-zinc-500 uppercase tracking-widest border-b border-white/5 mb-1">
+        Tools
+      </div>
+      <button
+        onClick={onAutoLayout}
+        className="flex items-center gap-3 px-2 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white rounded-lg transition-colors text-left group w-full mb-1"
+      >
+        <AlignStartVertical size={14} className="text-zinc-400 group-hover:text-white" />
+        <span className="font-medium">Auto Layout</span>
+      </button>
+
+      <div className="px-2 py-1.5 text-[10px] font-bold text-zinc-500 uppercase tracking-widest border-b border-white/5 mb-1">
+        Add Node
+      </div>
+      <div className="flex flex-col gap-0.5">
+        {menuItems.map((item, idx) => (
+          item.type === 'divider' ? (
+             <div key={idx} className="h-px bg-white/5 my-1" />
+          ) : (
+             <button
+                key={idx}
+                onClick={() => onAddNode(item.type as NodeType)}
+                className="flex items-center gap-3 px-2 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white rounded-lg transition-colors text-left group"
+             >
+                <item.icon size={14} className={item.color} />
+                <span className="font-medium">{item.label}</span>
+             </button>
+          )
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// --- Editor Sidebar Panel ---
+const EditorSidebar = ({ 
+    activeTab, 
+    onClose, 
+    onAddNode, 
+    onImportWorkflow 
+}: { 
+    activeTab: string | null, 
+    onClose: () => void, 
+    onAddNode: (type: NodeType) => void,
+    onImportWorkflow: (wf: WorkflowTemplate) => void
+}) => {
+    const [items, setItems] = useState<any[]>([]);
+    
+    useEffect(() => {
+        if (activeTab === 'history') {
+            getHistory().then(setItems);
+        } else if (activeTab === 'workflows') {
+            getWorkflowTemplates().then(setItems);
+        } else {
+            setItems([]);
+        }
+    }, [activeTab]);
+
+    if (!activeTab) return null;
+
+    return (
+        <div className="absolute left-24 top-24 bottom-6 w-72 bg-[#18181b]/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl z-20 flex flex-col animate-in slide-in-from-left-4 duration-200 overflow-hidden pointer-events-auto">
+             <div className="p-4 border-b border-white/5 flex items-center justify-between bg-white/5">
+                 <h3 className="font-bold text-white capitalize text-sm tracking-wider">
+                    {activeTab === 'add' ? 'Add Nodes' : activeTab === 'workflows' ? 'Library' : 'History'}
+                 </h3>
+                 <button onClick={onClose} className="p-1 hover:bg-white/10 rounded text-zinc-400 hover:text-white"><X size={16}/></button>
+             </div>
+             
+             <div 
+                className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2 nowheel"
+                onWheel={(e) => e.stopPropagation()}
+             >
+                 {/* Add Nodes */}
+                 {activeTab === 'add' && (
+                     <div className="grid grid-cols-1 gap-2">
+                        {[
+                            { label: 'Image Generator', type: NodeType.GEN_IMAGE, icon: Sparkles, color: 'text-blue-400', desc: "AI Image Synthesis" },
+                            { label: 'Text Generator', type: NodeType.GEN_TEXT, icon: MessageSquareText, color: 'text-amber-400', desc: "LLM Text Generation" },
+                            { label: 'Web Search', type: NodeType.GEN_SEARCH, icon: Globe, color: 'text-emerald-400', desc: "Google Search Grounding" },
+                            { label: 'Input Text', type: NodeType.INPUT_TEXT, icon: Type, color: 'text-zinc-400', desc: "Static Text Block" },
+                            { label: 'Input Image', type: NodeType.INPUT_IMAGE, icon: ImageIcon, color: 'text-purple-400', desc: "Upload / Paste Image" },
+                            { label: 'Group', type: NodeType.GROUP, icon: LayoutGrid, color: 'text-zinc-500', desc: "Organize Nodes" },
+                        ].map((item, i) => (
+                            <button key={i} onClick={() => onAddNode(item.type as NodeType)} className="flex items-start gap-3 p-3 rounded-xl bg-zinc-900/50 hover:bg-white/10 border border-white/5 hover:border-white/20 transition-all group text-left">
+                                <div className={`p-2 rounded-lg bg-black/50 ${item.color} mt-0.5`}><item.icon size={16}/></div>
+                                <div>
+                                    <span className="block text-sm font-bold text-zinc-300 group-hover:text-white">{item.label}</span>
+                                    <span className="text-[10px] text-zinc-500 group-hover:text-zinc-400">{item.desc}</span>
+                                </div>
+                            </button>
+                        ))}
+                     </div>
+                 )}
+
+                 {/* Workflows */}
+                 {activeTab === 'workflows' && (
+                     items.length === 0 ? <div className="text-zinc-500 text-xs text-center py-4">No workflows saved.</div> :
+                     items.map((wf: any) => (
+                        <div key={wf.id} className="p-3 bg-zinc-900/50 rounded-xl border border-white/5 hover:border-indigo-500/50 hover:bg-indigo-500/5 group cursor-pointer transition-all" onClick={() => onImportWorkflow(wf)}>
+                            <div className="flex items-center gap-2 mb-1">
+                                <Workflow size={14} className="text-indigo-400" />
+                                <span className="font-bold text-sm text-zinc-200 group-hover:text-white truncate">{wf.name}</span>
+                            </div>
+                            <p className="text-[10px] text-zinc-500 line-clamp-2">{wf.description || "No description"}</p>
+                        </div>
+                     ))
+                 )}
+
+                 {/* History */}
+                 {activeTab === 'history' && (
+                     items.length === 0 ? <div className="text-zinc-500 text-xs text-center py-4">No history yet.</div> :
+                     items.map((h: any) => (
+                        <div key={h.id} className="relative group rounded-lg overflow-hidden border border-white/5 cursor-pointer bg-black/50">
+                            <img src={h.imageData.startsWith('data:') ? h.imageData : `data:image/png;base64,${h.imageData}`} className="w-full h-auto object-cover opacity-80 group-hover:opacity-100 transition-opacity" loading="lazy" />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/90 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-2">
+                                <p className="text-[9px] text-white line-clamp-2 font-medium">{h.prompt}</p>
+                                <div className="flex items-center justify-between mt-1">
+                                    <span className="text-[8px] text-zinc-400">{h.model?.split('-')[1] || 'AI'}</span>
+                                    <span className="text-[8px] text-zinc-400">{new Date(h.timestamp).toLocaleTimeString()}</span>
+                                </div>
+                            </div>
+                        </div>
+                     ))
+                 )}
+             </div>
+        </div>
+    );
+};
+
 // --- Selection Overlay Component ---
 const SelectionOverlay = ({ 
     selectedNodes, 
     onCluster, 
     onRunSeq, 
     onSave, 
-    onUngroup 
+    onUngroup,
+    onDelete
 }: { 
     selectedNodes: Node<NodeData>[],
     onCluster: () => void,
     onRunSeq: () => void,
     onSave: () => void,
-    onUngroup: () => void
+    onUngroup: () => void,
+    onDelete: () => void
 }) => {
     const { x, y, zoom } = useViewport();
     
     if (selectedNodes.length === 0) return null;
+
+    // Only show overlay if multiple nodes are selected OR the single selected node is a GROUP
+    const isSingleNode = selectedNodes.length === 1;
+    const isGroup = selectedNodes[0]?.type === NodeType.GROUP;
+    
+    if (isSingleNode && !isGroup) return null;
     
     // Calculate bounding box in canvas space
-    const rect = getRectOfNodes(selectedNodes);
+    const rect = getNodesBounds(selectedNodes as any);
     if (!rect) return null;
 
     const hasGroup = selectedNodes.some(n => n.type === NodeType.GROUP);
@@ -113,7 +327,7 @@ const SelectionOverlay = ({
                 left: screenLeft,
                 top: screenTop,
                 // Move up significantly (scaled) to avoid being "tightly above"
-                transform: `translate(-50%, -150%) scale(${zoom})`, 
+                transform: `translate(-50%, -80px) scale(${1})`, 
             }}
         >
             <div className="flex items-center bg-[#18181b] border border-white/20 rounded-full shadow-[0_20px_50px_-10px_rgba(0,0,0,0.8)] p-1.5 pointer-events-auto backdrop-blur-xl gap-0 overflow-hidden min-w-max">
@@ -123,10 +337,11 @@ const SelectionOverlay = ({
                  <>
                     <button 
                         onClick={onCluster} 
-                        className="flex items-center gap-3 px-5 py-3 hover:bg-white/10 rounded-full text-zinc-400 hover:text-white transition-colors group"
+                        className="flex items-center gap-2 px-4 py-2 hover:bg-white/10 rounded-full text-zinc-400 hover:text-white transition-colors group"
+                        title="Group Nodes"
                     >
-                        <BoxSelect size={20} className="text-blue-400 group-hover:scale-110 transition-transform"/> 
-                        <span className="text-sm font-black tracking-widest uppercase font-sans">Cluster</span>
+                        <BoxSelect size={16} className="text-blue-400 group-hover:scale-110 transition-transform"/> 
+                        <span className="text-xs font-bold tracking-wide uppercase">Group</span>
                     </button>
                     <div className="w-px h-6 bg-white/10 mx-1" />
                  </>
@@ -137,37 +352,51 @@ const SelectionOverlay = ({
                  <>
                     <button 
                         onClick={onRunSeq} 
-                        className="flex items-center gap-4 px-6 py-3 hover:bg-white/10 rounded-full text-white transition-colors group"
+                        className="flex items-center gap-2 px-4 py-2 hover:bg-white/10 rounded-full text-white transition-colors group"
+                        title="Run Sequence"
                     >
-                        <Play size={24} className="text-green-400 fill-green-400 group-hover:scale-110 transition-transform"/> 
-                        <span className="text-xl font-black tracking-wider uppercase font-sans">Run Seq</span>
+                        <Play size={16} className="text-green-400 fill-green-400 group-hover:scale-110 transition-transform"/> 
+                        <span className="text-xs font-bold tracking-wide uppercase">Run</span>
                     </button>
-                    <div className="w-px h-8 bg-white/10 mx-2" />
+                    <div className="w-px h-6 bg-white/10 mx-1" />
                  </>
                )}
                
                {/* SAVE Button */}
                <button 
                 onClick={onSave} 
-                className="flex items-center gap-4 px-6 py-3 hover:bg-white/10 rounded-full text-white transition-colors group"
+                className="flex items-center gap-2 px-4 py-2 hover:bg-white/10 rounded-full text-white transition-colors group"
+                title="Save as Workflow"
                >
-                  <Save size={24} className="text-amber-400 group-hover:scale-110 transition-transform"/> 
-                  <span className="text-xl font-black tracking-wider uppercase font-sans">Save</span>
+                  <Save size={16} className="text-amber-400 group-hover:scale-110 transition-transform"/> 
+                  <span className="text-xs font-bold tracking-wide uppercase">Save</span>
                </button>
                
+               <div className="w-px h-6 bg-white/10 mx-1" />
+
                {/* Ungroup */}
                {hasGroup && (
                    <>
-                    <div className="w-px h-8 bg-white/10 mx-2" />
                     <button 
-                        onClick={onUngroup} 
-                        className="flex items-center gap-3 px-5 py-3 hover:bg-red-500/20 rounded-full text-zinc-400 hover:text-red-400 transition-colors group"
+                        onClick={() => onUngroup()} 
+                        className="flex items-center gap-2 px-4 py-2 hover:bg-red-500/20 rounded-full text-zinc-400 hover:text-red-400 transition-colors group"
+                        title="Ungroup"
                     >
-                        <Ungroup size={20} className="group-hover:scale-110 transition-transform"/> 
-                        <span className="text-sm font-black tracking-widest uppercase font-sans">Ungroup</span>
+                        <Ungroup size={16} className="group-hover:scale-110 transition-transform"/> 
+                        <span className="text-xs font-bold tracking-wide uppercase">Ungroup</span>
                     </button>
+                    <div className="w-px h-6 bg-white/10 mx-1" />
                    </>
                )}
+
+               {/* Delete */}
+               <button 
+                    onClick={onDelete} 
+                    className="flex items-center gap-2 px-4 py-2 hover:bg-red-500/20 rounded-full text-zinc-400 hover:text-red-400 transition-colors group"
+                    title="Delete Selection"
+                >
+                    <Trash2 size={16} className="group-hover:scale-110 transition-transform"/> 
+                </button>
             </div>
         </div>
     );
@@ -179,7 +408,8 @@ interface NodeEditorProps {
     onOpenSettings?: () => void;
 }
 
-export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpenSettings }) => {
+// Inner Component containing main logic
+const NodeEditorContent: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpenSettings }) => {
   // React Flow State
   const [nodes, setNodes, onNodesChange] = useNodesState<NodeData>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -189,32 +419,19 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
   
   // Instance State for Custom Controls
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
-  const [isLocked, setIsLocked] = useState(false);
   
   // Context Menu State
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 
-  // Clear Confirmation State
-  const [showClearDialog, setShowClearDialog] = useState(false);
-
-  // Workflow Delete Confirmation State
-  const [workflowDeleteId, setWorkflowDeleteId] = useState<string | null>(null);
-
-  // Refs for Access inside Async Functions
-  const nodesRef = useRef(nodes);
-  const edgesRef = useRef(edges);
-
-  useEffect(() => { nodesRef.current = nodes; }, [nodes]);
-  useEffect(() => { edgesRef.current = edges; }, [edges]);
+  // Sidebar State
+  const [activeSidebar, setActiveSidebar] = useState<string | null>(null);
 
   // App State
   const [isLoaded, setIsLoaded] = useState(false);
-  const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [projectName, setProjectName] = useState("Project Workspace");
   const [isRenaming, setIsRenaming] = useState(false);
   
   // Editor State
-  const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [editingImage, setEditingImage] = useState<string | null>(null);
   const [editingSourceNodeId, setEditingSourceNodeId] = useState<string | null>(null);
   
@@ -222,10 +439,15 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
   const [isWorkflowModalOpen, setIsWorkflowModalOpen] = useState(false);
   const [isCopilotOpen, setIsCopilotOpen] = useState(false);
 
-  // UI State
-  const [activeMenu, setActiveMenu] = useState<'add' | 'history' | 'workflows' | null>(null);
-  const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
-  const [workflowTemplates, setWorkflowTemplates] = useState<WorkflowTemplate[]>([]);
+  // Connection State
+  const connectionStartRef = useRef<{ nodeId: string | null; handleId: string | null; handleType: string | null } | null>(null);
+
+  // Refs for Access inside Async Functions to avoid dependency loops
+  const nodesRef = useRef(nodes);
+  const edgesRef = useRef(edges);
+
+  useEffect(() => { nodesRef.current = nodes; }, [nodes]);
+  useEffect(() => { edgesRef.current = edges; }, [edges]);
 
   // --- Persistence Logic ---
   useEffect(() => {
@@ -261,9 +483,7 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
   useEffect(() => {
     if (!isLoaded) return;
     const handler = setTimeout(() => {
-        saveProjectData(projectId, nodes, edges).then(() => {
-            setLastSaved(new Date());
-        });
+        saveProjectData(projectId, nodes, edges);
     }, 2000); 
     return () => clearTimeout(handler);
   }, [nodes, edges, isLoaded, projectId]);
@@ -282,27 +502,79 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
   }, []);
 
   const onConnect = useCallback((params: Connection) => {
-    if (isLocked) return;
     setEdges((eds) => addEdge({ ...params, type: 'deletable', animated: true, style: { stroke: '#3b82f6', strokeWidth: 2, strokeOpacity: 0.8 } }, eds));
-  }, [setEdges, isLocked]);
+  }, [setEdges]);
+
+  const onConnectStart: OnConnectStart = useCallback((_, params) => {
+      connectionStartRef.current = params;
+  }, []);
+
+  const onConnectEnd: OnConnectEnd = useCallback((event) => {
+      const targetIsPane = (event.target as Element).classList.contains('react-flow__pane');
+      
+      if (targetIsPane && connectionStartRef.current && rfInstance) {
+          // Drop happened on pane, create a new node
+          const { nodeId, handleId } = connectionStartRef.current;
+          
+          if (nodeId) {
+             const { clientX, clientY } = event as MouseEvent;
+             const position = rfInstance.project({ x: clientX, y: clientY });
+             
+             // Create New Node (Defaulting to Gen Image for now, or could be context menu)
+             const newId = `node_${Date.now()}_auto`;
+             const newNode: Node = {
+                  id: newId,
+                  type: NodeType.GEN_IMAGE,
+                  position: { x: position.x - 100, y: position.y - 50 }, // Centered on mouse
+                  data: { 
+                      title: 'Refined Gen', 
+                      params: { model: GeneratorModel.GEMINI_FLASH_IMAGE, aspectRatio: '1:1' },
+                      text: '',
+                      // Handlers will be patched by effect
+                      onChange: updateNodeData, 
+                      onDelete: deleteNode, 
+                      onRun: handleRunNode, 
+                      onEdit: handleOpenImageEditor
+                  }
+              };
+              
+              setNodes((nds) => [...nds, newNode]);
+              setEdges((eds) => addEdge({ 
+                  id: `e-${nodeId}-${newId}`, 
+                  source: nodeId, 
+                  sourceHandle: handleId,
+                  target: newId, 
+                  type: 'deletable', 
+                  animated: true, 
+                  style: { stroke: '#3b82f6', strokeWidth: 2, strokeOpacity: 0.8 } 
+              }, eds));
+          }
+      }
+      
+      connectionStartRef.current = null;
+  }, [rfInstance, setNodes, setEdges]);
+
 
   const onNodeContextMenu: NodeMouseHandler = useCallback(
     (event, node) => {
       event.preventDefault();
-      // If we right-click a node that isn't selected, select it exclusively
-      const isSelected = node.selected || selectedNodes.some(n => n.id === node.id);
-      if (!isSelected) {
-          setNodes((nds) => nds.map(n => ({...n, selected: n.id === node.id})));
-          setSelectedNodes([node]); 
-      }
-      setContextMenu({ x: event.clientX, y: event.clientY });
+      // Select the node right clicked
+      setNodes((nds) => nds.map(n => ({...n, selected: n.id === node.id})));
+      setSelectedNodes([node]);
     },
-    [selectedNodes, setNodes]
+    [setNodes]
+  );
+
+  const onPaneContextMenu = useCallback(
+    (event: React.MouseEvent) => {
+        event.preventDefault();
+        setContextMenu({ x: event.clientX, y: event.clientY });
+    },
+    []
   );
 
   const onPaneClick = useCallback(() => {
     setContextMenu(null);
-    setActiveMenu(null);
   }, []);
 
   const updateNodeData = useCallback((id: string, newData: Partial<NodeData>) => {
@@ -329,1060 +601,582 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
   }, [setNodes]);
 
   const deleteNode = useCallback((id: string) => {
-    if (isLocked) return;
     setNodes((nds) => {
       const nodeToDelete = nds.find(n => n.id === id);
       if (nodeToDelete?.type === NodeType.GROUP) {
          const children = nds.filter(n => n.parentNode === id);
          const childrenIds = children.map(n => n.id);
-         setEdges((eds) => eds.filter((edge) => edge.source !== id && edge.target !== id && !childrenIds.includes(edge.source) && !childrenIds.includes(edge.target)));
+         setEdges((eds) => eds.filter((edge) => 
+             edge.source !== id && edge.target !== id && 
+             !childrenIds.includes(edge.source) && !childrenIds.includes(edge.target)
+         ));
          return nds.filter((node) => node.id !== id && node.parentNode !== id);
       }
+      setEdges((eds) => eds.filter((edge) => edge.source !== id && edge.target !== id));
       return nds.filter((node) => node.id !== id);
     });
-    setEdges((eds) => eds.filter((edge) => edge.source !== id && edge.target !== id));
-  }, [setNodes, setEdges, isLocked]);
+  }, [setNodes, setEdges]);
 
-  const handleDeleteSelected = useCallback(() => {
-     selectedNodes.forEach(node => deleteNode(node.id));
-     setContextMenu(null);
-  }, [selectedNodes, deleteNode]);
+  // --- Layout Handler ---
+  const handleAutoLayout = useCallback(() => {
+      const layouted = getLayoutedElements(nodes, edges);
+      setNodes([...layouted.nodes]);
+      setEdges([...layouted.edges]);
+      if(rfInstance) {
+          setTimeout(() => rfInstance.fitView({ padding: 0.2, duration: 800 }), 100);
+      }
+      setContextMenu(null);
+  }, [nodes, edges, setNodes, setEdges, rfInstance]);
 
-  const addNextNode = useCallback((sourceId: string) => {
-    if (isLocked) return;
-    setNodes((nds) => {
-        const sourceNode = nds.find(n => n.id === sourceId);
-        if (!sourceNode) return nds;
+  // --- Execution Logic ---
+  // Important: processNode is memoized and uses refs for data access to prevent infinite loops in effects
+  const processNode = useCallback(async (nodeId: string, visited = new Set<string>()): Promise<any> => {
+      if (visited.has(nodeId)) return;
+      visited.add(nodeId);
 
-        const newId = `${NodeType.GEN_IMAGE}-${Date.now()}`;
-        const isSmallSource = sourceNode.type === NodeType.INPUT_IMAGE || sourceNode.type === NodeType.UPLOAD_IMAGE;
-        const sourceWidth = isSmallSource ? 280 : 380;
-        const gap = 100; 
-        
-        let newPos = { 
-            x: sourceNode.position.x + sourceWidth + gap, 
-            y: sourceNode.position.y 
-        };
+      const node = nodesRef.current.find(n => n.id === nodeId);
+      if (!node) return;
 
-        // Inherit params but ensure valid image model
-        let inheritedParams = sourceNode.data.params ? { ...sourceNode.data.params } : { model: GeneratorModel.GEMINI_FLASH_IMAGE, aspectRatio: "16:9", imageSize: "1K", numberOfImages: 1 };
-        
-        // Prevent inheriting Text models for Image nodes
-        if (inheritedParams.model === GeneratorModel.GEMINI_FLASH_TEXT || inheritedParams.model === GeneratorModel.GEMINI_PRO_TEXT) {
-            inheritedParams.model = GeneratorModel.GEMINI_FLASH_IMAGE;
-        }
-
-        const newNode: Node<NodeData> = {
-            id: newId,
-            type: NodeType.GEN_IMAGE,
-            position: newPos,
-            data: { 
-                text: "", 
-                params: inheritedParams 
-            }
-        };
-
-        setEdges((eds) => addEdge({ 
-            source: sourceId, 
-            target: newId, 
-            id: `e-${sourceId}-${newId}`,
-            type: 'deletable', 
-            animated: true,
-            style: { stroke: '#3b82f6', strokeWidth: 2 }
-        }, eds));
-
-        return [...nds, newNode];
-    });
-  }, [setNodes, setEdges, isLocked]);
-
-  // --- Execution Engine ---
-
-  const executeNode = async (id: string, overrides?: Map<string, any>) => {
-    if (isKeyRequired()) {
-        if (confirm("The current system key is for demonstration only. Image generation is disabled.\n\nWould you like to open Settings to provide your own Gemini API Key?")) {
-            onOpenSettings?.();
-        }
-        return;
-    }
-
-    const currentNodes = nodesRef.current;
-    const currentEdges = edgesRef.current;
-    
-    const node = currentNodes.find(n => n.id === id);
-    if (!node) return;
-
-    updateNodeData(id, { isLoading: true, result: undefined, results: undefined, error: undefined });
-
-    try {
-      // Find connected input nodes
-      const inputEdges = currentEdges.filter(e => e.target === id);
+      // 1. Process Dependencies (Upstream)
+      const inputEdges = edgesRef.current.filter(e => e.target === nodeId);
+      const inputNodes = inputEdges
+        .map(e => nodesRef.current.find(n => n.id === e.source))
+        .filter(Boolean) as Node[];
       
-      // Sort edges by source node Y position to allow deterministic indexing for placeholders
-      // This matches the visual order in the "Input Variables" legend
-      inputEdges.sort((a, b) => {
-          const nodeA = currentNodes.find(n => n.id === a.source);
-          const nodeB = currentNodes.find(n => n.id === b.source);
-          return (nodeA?.position.y || 0) - (nodeB?.position.y || 0);
-      });
+      inputNodes.sort((a, b) => a.position.y - b.position.y);
 
-      // Map edges to their content to preserve index mapping for {{node N}}
-      const inputContent = inputEdges.map(edge => {
-          const sourceNode = currentNodes.find(n => n.id === edge.source);
-          let text: string | null = null;
-          let image: string | null = null;
+      const inputValues: string[] = [];
+      
+      for (const inputNode of inputNodes) {
+          if ((inputNode.type === NodeType.GEN_IMAGE || inputNode.type === NodeType.GEN_TEXT || inputNode.type === NodeType.GEN_SEARCH) && !inputNode.data.result) {
+              await processNode(inputNode.id, visited);
+          }
+          const freshInputNode = nodesRef.current.find(n => n.id === inputNode.id);
+          if (freshInputNode) {
+              const val = freshInputNode.data.result || freshInputNode.data.image || freshInputNode.data.text;
+              if (val) inputValues.push(val);
+          }
+      }
 
-          if (sourceNode) {
-              // Override checking (for Group execution)
-              if (overrides && overrides.has(edge.source)) {
-                 const ov = overrides.get(edge.source);
-                 if (ov?.result) {
-                     if (typeof ov.result === 'string' && !ov.result.startsWith('data:')) {
-                         text = ov.result;
-                     } else {
-                         image = ov.result;
-                     }
+      // 2. Execute Current Node
+      if (node.type === NodeType.GEN_IMAGE) {
+          updateNodeData(nodeId, { isLoading: true, error: undefined });
+          try {
+              let prompt = node.data.text || "";
+              inputValues.forEach((val, idx) => {
+                 if (!val.startsWith('data:')) {
+                     prompt = prompt.replace(new RegExp(`{{node ${idx}}}`, 'g'), val);
+                     prompt = prompt.replace(new RegExp(`{{input}}`, 'g'), inputValues.filter(v => !v.startsWith('data:')).join(' '));
                  }
-              }
+              });
 
-              // Normal extraction if no override or override didn't provide specific type
-              if (!text && !image) {
-                  // Text Extraction
-                  if (sourceNode.type === NodeType.INPUT_TEXT && sourceNode.data.text) {
-                      text = sourceNode.data.text;
-                  } else if (sourceNode.type === NodeType.GEN_TEXT && sourceNode.data.result) {
-                      text = sourceNode.data.result;
-                  }
+              const imageInputs = inputValues.filter(v => v.startsWith('data:'));
+              
+              const results = await generateImageContent({
+                  prompt,
+                  images: imageInputs,
+                  model: (node.data.params?.model as GeneratorModel) || GeneratorModel.GEMINI_FLASH_IMAGE,
+                  aspectRatio: node.data.params?.aspectRatio,
+                  imageSize: node.data.params?.imageSize as any,
+                  numberOfImages: node.data.params?.numberOfImages || 1,
+                  camera: node.data.params?.camera
+              });
 
-                  // Image Extraction
-                  if (sourceNode.data.result && sourceNode.data.result.startsWith('data:image')) {
-                      image = sourceNode.data.result;
-                  } else if (sourceNode.data.preview) {
-                      image = sourceNode.data.preview;
-                  } else if (sourceNode.data.image) {
-                      image = sourceNode.data.image;
-                  }
-              }
+              updateNodeData(nodeId, { isLoading: false, result: results[0], results: results });
+              
+              addBatchToHistory(results.map(r => ({
+                  prompt,
+                  imageData: r,
+                  model: node.data.params?.model || 'unknown',
+                  aspectRatio: node.data.params?.aspectRatio || '1:1',
+                  camera: node.data.params?.camera,
+                  referenceImages: imageInputs
+              })));
+
+          } catch (err: any) {
+              updateNodeData(nodeId, { isLoading: false, error: err.message });
           }
-          return { text, image };
-      });
+      } else if (node.type === NodeType.GEN_TEXT) {
+           updateNodeData(nodeId, { isLoading: true, error: undefined });
+           try {
+              let prompt = node.data.text || "";
+              inputValues.forEach((val, idx) => {
+                 if (!val.startsWith('data:')) {
+                     prompt = prompt.replace(new RegExp(`{{node ${idx}}}`, 'g'), val);
+                     prompt = prompt.replace(new RegExp(`{{input}}`, 'g'), inputValues.filter(v => !v.startsWith('data:')).join(' '));
+                 }
+              });
+              
+              const imageInputs = inputValues.filter(v => v.startsWith('data:'));
 
-      // Collect for API calls (dense arrays for API, but referencing needs index)
-      const collectedImages = inputContent.map(c => c.image).filter(Boolean) as string[];
-      const allInputTexts = inputContent.map(c => c.text).filter(t => t && t.trim().length > 0) as string[];
+              const result = await generateTextContent({
+                  prompt,
+                  images: imageInputs,
+                  model: node.data.params?.model || 'gemini-3-flash-preview',
+                  thinkingBudget: node.data.params?.thinkingBudget
+              });
+              updateNodeData(nodeId, { isLoading: false, result });
+           } catch (err: any) {
+              updateNodeData(nodeId, { isLoading: false, error: err.message });
+           }
+      } else if (node.type === NodeType.GEN_SEARCH) {
+           updateNodeData(nodeId, { isLoading: true, error: undefined });
+           try {
+              let query = node.data.text || "";
+              inputValues.forEach((val, idx) => {
+                 if (!val.startsWith('data:')) {
+                     query = query.replace(new RegExp(`{{node ${idx}}}`, 'g'), val);
+                 }
+              });
 
-      // Add self image if present
-      if (node.data.image) {
-          collectedImages.push(node.data.image);
+              const { text, sources } = await generateSearchContent({ query });
+              updateNodeData(nodeId, { isLoading: false, result: text, searchSources: sources });
+           } catch (err: any) {
+               updateNodeData(nodeId, { isLoading: false, error: err.message });
+           }
       }
-
-      // --- Prompt Construction with Template Support ---
-      let finalPrompt = node.data.text || "";
-      let usedPlaceholder = false;
-
-      // Replace {{node N}}, {{node_N}}, {{nodeN}} with the N-th connected input's text
-      // IMPORTANT: We use inputContent array to ensure index matches the Y-sorted connection list
-      finalPrompt = finalPrompt.replace(/\{\{node[_\s]*(\d+)\}\}/gi, (match, indexStr) => {
-          usedPlaceholder = true;
-          const index = parseInt(indexStr);
-          if (!isNaN(index) && inputContent[index] && inputContent[index].text) {
-              return inputContent[index].text!;
-          }
-          // If node exists but has no text (e.g., it's an image), return empty to avoid breaking prompt
-          return ""; 
-      });
-
-      // Replace {{input}} with all connected text inputs joined
-      finalPrompt = finalPrompt.replace(/\{\{input\}\}/gi, (match) => {
-          usedPlaceholder = true;
-          return allInputTexts.join("\n");
-      });
-
-      // Fallback: If no placeholders used, append texts to the end (Legacy behavior)
-      if (!usedPlaceholder && allInputTexts.length > 0) {
-           finalPrompt = [finalPrompt, ...allInputTexts].join("\n\n");
-      }
-
-      if (node.type === NodeType.GEN_TEXT) {
-          // --- Text Generation ---
-          if (!finalPrompt && collectedImages.length === 0) {
-              throw new Error("No prompt or images provided.");
-          }
-          
-          const resultText = await generateTextContent({
-              prompt: finalPrompt || "Describe the input images.",
-              images: collectedImages,
-              model: node.data.params?.model || GeneratorModel.GEMINI_FLASH_TEXT
-          });
-          
-          updateNodeData(id, { result: resultText, error: undefined });
-          return resultText;
-
-      } else {
-          // --- Image Generation ---
-          if (!finalPrompt) {
-              throw new Error("No prompt provided. Please add text to the generator or connect a text node.");
-          }
-
-          // Strict Model Validation for Image Generation
-          let selectedModel = node.data.params?.model as GeneratorModel;
-          if (selectedModel === GeneratorModel.GEMINI_FLASH_TEXT || selectedModel === GeneratorModel.GEMINI_PRO_TEXT || !selectedModel) {
-              // Default to Flash Image if invalid/text model is set
-              selectedModel = GeneratorModel.GEMINI_FLASH_IMAGE;
-          }
-
-          const params = {
-            prompt: finalPrompt,
-            images: collectedImages, 
-            model: selectedModel,
-            aspectRatio: node.data.params?.aspectRatio as any,
-            imageSize: node.data.params?.imageSize as any,
-            camera: node.data.params?.camera,
-            numberOfImages: node.data.params?.numberOfImages || 1
-          };
-
-          const resultImages = await generateImageContent(params);
-          console.log(">>> [NodeEditor] Final Result Images:", resultImages);
-
-          // Store all results, set first as main result
-          updateNodeData(id, { 
-              results: resultImages, 
-              result: resultImages[0], 
-              error: undefined 
-          });
-          
-          if (resultImages.length > 0) {
-              const historyPayload = resultImages.map(img => ({
-                  prompt: params.prompt,
-                  imageData: img,
-                  model: params.model,
-                  aspectRatio: params.aspectRatio || "16:9",
-                  camera: params.camera,
-                  referenceImages: collectedImages 
-              }));
-
-              await addBatchToHistory(historyPayload);
-
-              if (activeMenu === 'history') {
-                 getHistory().then(setHistoryItems);
-              }
-          }
-
-          return resultImages[0];
-      }
-
-    } catch (error: any) {
-      console.error("Node Generation Error", error);
-      let errorMessage = "Generation failed.";
-      if (error instanceof Error) {
-        errorMessage = error.message;
-        if (errorMessage.includes("400")) errorMessage = "Invalid request or blocked by safety filters.";
-        if (errorMessage.includes("503") || errorMessage.includes("500")) errorMessage = "Service unavailable. Please try again.";
-        if (errorMessage.includes("429")) errorMessage = "Rate limit exceeded. Please wait a moment.";
-        if (errorMessage.includes("DEMO_KEY_RESTRICTION")) {
-            errorMessage = "Generation disabled (Demo Key). Please enter your own key in Settings.";
-        }
-      }
-      updateNodeData(id, { result: undefined, results: undefined, error: errorMessage }); 
-      return undefined;
-    } finally {
-      updateNodeData(id, { isLoading: false });
-    }
-  };
-
-  const handleNodeRun = useCallback(async (id: string) => {
-      await executeNode(id);
   }, [updateNodeData]);
 
-  // --- Grouping Actions ---
+  const handleRunNode = useCallback(async (id: string) => {
+      await processNode(id);
+  }, [processNode]);
 
-  const handleGroupNodes = useCallback(() => {
-    const currentlySelected = nodesRef.current.filter(n => n.selected);
-    if (currentlySelected.length < 2) return;
+  const handleRunGroup = useCallback(async (groupId: string) => {
+      const currentNodes = nodesRef.current;
+      const currentEdges = edgesRef.current;
 
-    const roots = currentlySelected.filter(node => {
-        if (!node.parentNode) return true; 
-        return !currentlySelected.some(p => p.id === node.parentNode);
-    });
-    
-    if (roots.length === 0) return;
-
-    const rect = getRectOfNodes(roots);
-    const padding = 60; 
-    
-    const groupId = `group-${Date.now()}`;
-    const groupNode: Node<NodeData> = {
-      id: groupId,
-      type: NodeType.GROUP,
-      position: { x: rect.x - padding, y: rect.y - padding },
-      style: { 
-        width: rect.width + padding * 2, 
-        height: rect.height + padding * 2,
-        zIndex: -1, 
-      },
-      data: { label: 'Cluster' },
-      selected: true, 
-    };
-
-    setNodes((nds) => {
-      const rootIds = new Set(roots.map(n => n.id));
+      const groupNodes = currentNodes.filter(n => n.parentNode === groupId);
+      const groupNodeIds = groupNodes.map(n => n.id);
       
-      const updatedNodes = nds.map(n => {
-          if (rootIds.has(n.id)) {
-             return {
-                 ...n,
-                 parentNode: groupId,
-                 extent: 'parent' as const,
-                 position: { 
-                    x: n.position.x - (rect.x - padding), 
-                    y: n.position.y - (rect.y - padding) 
-                 },
-                 selected: false,
-                 draggable: true, 
-             };
+      const internalEdges = currentEdges.filter(e => groupNodeIds.includes(e.source) && groupNodeIds.includes(e.target));
+      const hasOutput = new Set(internalEdges.map(e => e.source));
+      
+      // Leaf nodes in the context of the group (end of chain within group)
+      const leafs = groupNodes.filter(n => !hasOutput.has(n.id));
+      
+      for (const leaf of leafs) {
+          if (leaf.type.startsWith('GEN_')) {
+              await processNode(leaf.id);
+          }
+      }
+  }, [processNode]);
+
+  const handleOpenImageEditor = useCallback((nodeId: string, imgData: string) => {
+      setEditingSourceNodeId(nodeId);
+      setEditingImage(imgData);
+  }, []);
+
+  const handleSaveEditedImage = useCallback((newImgData: string) => {
+      if (editingSourceNodeId) {
+          updateNodeData(editingSourceNodeId, { result: newImgData });
+          setEditingImage(null);
+          setEditingSourceNodeId(null);
+      }
+  }, [editingSourceNodeId, updateNodeData]);
+
+  const handleUngroup = useCallback((groupId?: string) => {
+      setNodes((nds) => {
+          const targetId = typeof groupId === 'string' ? groupId : selectedNodes.find(n => n.type === NodeType.GROUP)?.id;
+          if (!targetId) return nds;
+
+          const group = nds.find(n => n.id === targetId);
+          if (!group) return nds;
+
+          const children = nds.filter(n => n.parentNode === targetId);
+          const updatedChildren = children.map(n => ({
+              ...n,
+              parentNode: undefined,
+              extent: undefined,
+              position: { x: n.position.x + group.position.x, y: n.position.y + group.position.y }
+          } as Node));
+
+          return nds.filter(n => n.id !== targetId && n.parentNode !== targetId).concat(updatedChildren);
+      });
+  }, [selectedNodes, setNodes]);
+
+  // --- Graph Management ---
+  
+  // Dedicated function to add a next step node connected to source
+  const handleAddNextNode = useCallback((sourceId: string) => {
+      const sourceNode = nodesRef.current.find(n => n.id === sourceId);
+      if (!sourceNode) return;
+
+      const newId = `node_${Date.now()}_next`;
+      const newNode: Node = {
+          id: newId,
+          type: NodeType.GEN_IMAGE,
+          position: { x: sourceNode.position.x + 450, y: sourceNode.position.y },
+          data: { 
+              title: 'Refined Gen', 
+              params: { model: GeneratorModel.GEMINI_FLASH_IMAGE, aspectRatio: '1:1' },
+              // These will be patched by useEffect, but providing keys here for initial render safety
+              onChange: updateNodeData, 
+              onDelete: deleteNode, 
+              onRun: handleRunNode, 
+              onEdit: handleOpenImageEditor
+          }
+      };
+
+      setNodes(nds => [...nds, newNode]);
+      setEdges(eds => addEdge({ 
+          id: `e-${sourceId}-${newId}`, 
+          source: sourceId, 
+          target: newId, 
+          type: 'deletable', 
+          animated: true, 
+          style: { stroke: '#3b82f6', strokeWidth: 2, strokeOpacity: 0.8 } 
+      }, eds));
+  }, [updateNodeData, deleteNode, handleRunNode, handleOpenImageEditor, setNodes, setEdges]);
+
+  const handleAddNode = useCallback((type: NodeType, pos?: {x: number, y: number}) => {
+      const id = `node_${Date.now()}`;
+      let data: NodeData = { 
+          title: type === NodeType.GEN_SEARCH ? 'Web Search' : 'Untitled',
+          onChange: updateNodeData,
+          onDelete: deleteNode,
+          onRun: handleRunNode,
+          onAddNext: handleAddNextNode,
+          onEdit: handleOpenImageEditor
+      };
+
+      if (type === NodeType.GEN_IMAGE) {
+          data.params = { model: GeneratorModel.GEMINI_FLASH_IMAGE, aspectRatio: "1:1", numberOfImages: 1 };
+          data.text = "";
+      } else if (type === NodeType.GEN_TEXT) {
+          data.params = { model: 'gemini-3-flash-preview', thinkingBudget: 0 };
+          data.text = "";
+      } else if (type === NodeType.GEN_SEARCH) {
+          data.text = "";
+      } else if (type === NodeType.GROUP) {
+          data.label = "Workflow Group";
+          data.onRunGroup = handleRunGroup;
+          data.onUngroup = handleUngroup;
+      }
+
+      let position = { x: 0, y: 0 };
+      if (pos && rfInstance) {
+          position = rfInstance.project(pos);
+      } else if (rfInstance) {
+          const { x, y, zoom } = rfInstance.getViewport();
+          position = { x: -x/zoom + window.innerWidth/2/zoom - 150, y: -y/zoom + window.innerHeight/2/zoom - 100 };
+      }
+
+      const newNode: Node = {
+          id,
+          type,
+          position,
+          data,
+          ...(type === NodeType.GROUP ? { style: { width: 400, height: 300, zIndex: -1 } } : {})
+      };
+      
+      setNodes((nds) => [...nds, newNode]);
+      setContextMenu(null);
+      setActiveSidebar(null);
+  }, [updateNodeData, deleteNode, handleRunNode, handleAddNextNode, handleRunGroup, handleUngroup, handleOpenImageEditor, rfInstance, setNodes]);
+
+  const handleGroupSelection = () => {
+      if (selectedNodes.length < 2) return;
+      
+      const rect = getNodesBounds(selectedNodes as any);
+      const groupId = `group_${Date.now()}`;
+      
+      const groupNode: Node = {
+          id: groupId,
+          type: NodeType.GROUP,
+          position: { x: rect.x - 20, y: rect.y - 40 },
+          style: { width: rect.width + 40, height: rect.height + 60, zIndex: -1 },
+          data: { label: 'New Group', onChange: updateNodeData, onRunGroup: handleRunGroup, onUngroup: handleUngroup }
+      };
+
+      const updatedNodes = nodes.map(n => {
+          if (selectedNodes.find(sn => sn.id === n.id)) {
+              return {
+                  ...n,
+                  parentNode: groupId,
+                  extent: 'parent',
+                  position: { x: n.position.x - (rect.x - 20), y: n.position.y - (rect.y - 40) } 
+              } as Node;
           }
           return n;
       });
 
-      return [groupNode, ...updatedNodes];
-    });
-    setContextMenu(null);
-  }, [setNodes]);
-
-  const handleUngroupNodes = useCallback((groupId?: string) => {
-    // If no specific group ID is passed (e.g. from selection menu), try to find from selected nodes
-    let targetGroupId = groupId;
-    
-    if (!targetGroupId) {
-       // Check if a group node is explicitly selected
-       const selectedGroup = nodesRef.current.find(n => n.selected && n.type === NodeType.GROUP);
-       if (selectedGroup) {
-           targetGroupId = selectedGroup.id;
-       } else {
-           // Check if any selected node has a parent
-           const childNode = nodesRef.current.find(n => n.selected && n.parentNode);
-           if (childNode) targetGroupId = childNode.parentNode;
-       }
-    }
-
-    if (!targetGroupId) return;
-
-    setNodes((nds) => {
-      const groupNode = nds.find(n => n.id === targetGroupId);
-      if (!groupNode) return nds;
-
-      const children = nds.filter(n => n.parentNode === targetGroupId);
-      const others = nds.filter(n => n.id !== targetGroupId && n.parentNode !== targetGroupId);
-      
-      const updatedChildren = children.map(n => {
-         const absX = groupNode.position.x + n.position.x;
-         const absY = groupNode.position.y + n.position.y;
-         
-         const { parentNode, extent, ...rest } = n;
-         return {
-            ...rest,
-            position: { x: absX, y: absY },
-            selected: true 
-         };
-      });
-
-      return [...others, ...updatedChildren];
-    });
-  }, [setNodes]);
-
-  const runNodeSequence = useCallback(async (nodesToRun: Node<NodeData>[]) => {
-      const currentNodes = nodesRef.current;
-      const currentEdges = edgesRef.current;
-      
-      if (nodesToRun.length === 0) return;
-      const runNodeIds = new Set(nodesToRun.map(n => n.id));
-
-      // Calculate dependencies strictly within the selection
-      const adjacency = new Map<string, string[]>();
-      const inDegree = new Map<string, number>();
-
-      nodesToRun.forEach(n => {
-          adjacency.set(n.id, []);
-          inDegree.set(n.id, 0);
-      });
-
-      currentEdges.forEach(e => {
-          if (runNodeIds.has(e.source) && runNodeIds.has(e.target)) {
-              adjacency.get(e.source)?.push(e.target);
-              inDegree.set(e.target, (inDegree.get(e.target) || 0) + 1);
-          }
-      });
-
-      // Topological Sort
-      const queue = nodesToRun.filter(n => (inDegree.get(n.id) || 0) === 0);
-      
-      // Sort initial queue by Y position (top-down execution preference for independent nodes)
-      queue.sort((a, b) => a.position.y - b.position.y);
-
-      const executionOrder: string[] = [];
-      const tempInDegree = new Map(inDegree);
-      const processQueue = [...queue];
-
-      while(processQueue.length > 0) {
-          const node = processQueue.shift()!;
-          executionOrder.push(node.id);
-
-          const neighbors = adjacency.get(node.id) || [];
-          for (const neighborId of neighbors) {
-              tempInDegree.set(neighborId, (tempInDegree.get(neighborId)! - 1));
-              if (tempInDegree.get(neighborId) === 0) {
-                  const neighborNode = nodesToRun.find(n => n.id === neighborId);
-                  if (neighborNode) processQueue.push(neighborNode);
-              }
-          }
-      }
-      
-      if (executionOrder.length !== nodesToRun.length) {
-          console.warn("Cycle detected or disconnected graph in sequence run. Running reachable nodes.");
-      }
-
-      // Execute
-      for (const nodeId of executionOrder) {
-          const node = currentNodes.find(n => n.id === nodeId);
-          if (node && (node.type === NodeType.GEN_IMAGE || node.type === NodeType.GEN_TEXT)) {
-             await executeNode(nodeId);
-             await new Promise(r => setTimeout(r, 200));
-          }
-      }
-  }, [executeNode]);
-
-  const handleRunGroup = useCallback(async (groupId: string) => {
-      const groupNodes = nodesRef.current.filter(n => n.parentNode === groupId);
-      if (groupNodes.length === 0) return;
-      await runNodeSequence(groupNodes);
-  }, [runNodeSequence]);
-
-  const handleRunSelectedSequence = useCallback(() => {
-     // If a group is selected, run its children
-     const selectedGroups = selectedNodes.filter(n => n.type === NodeType.GROUP);
-     if (selectedGroups.length > 0) {
-         selectedGroups.forEach(g => handleRunGroup(g.id));
-         return;
-     }
-     // Otherwise run selected nodes in sequence
-     runNodeSequence(selectedNodes);
-  }, [selectedNodes, runNodeSequence, handleRunGroup]);
-
-  const handleCreateWorkflow = useCallback((groupId?: string) => {
-     setIsWorkflowModalOpen(true);
-     setContextMenu(null);
-  }, []);
-
-  const handleSaveModalConfirm = async (data: { name: string; description: string; tags: string[] }) => {
-     const nodesToSaveSet = new Set<Node<NodeData>>(selectedNodes.length > 0 ? selectedNodes : (nodes as Node<NodeData>[]));
-     
-     if (nodesToSaveSet.size === 0) {
-         alert("No nodes to save!");
-         return;
-     }
-
-     const currentNodes = nodesRef.current;
-     let changed = true;
-     while(changed) {
-         changed = false;
-         currentNodes.forEach(node => {
-             if (!nodesToSaveSet.has(node as Node<NodeData>) && node.parentNode && Array.from(nodesToSaveSet).some(p => p.id === node.parentNode)) {
-                 nodesToSaveSet.add(node as Node<NodeData>);
-                 changed = true;
-             }
-         });
-     }
-
-     const nodesToSave = Array.from(nodesToSaveSet);
-     const nodeIds = new Set(nodesToSave.map(n => n.id));
-     const edgesToSave = edges.filter(e => nodeIds.has(e.source) && nodeIds.has(e.target));
-
-     const template = {
-         name: data.name,
-         description: data.description,
-         tags: data.tags,
-         nodes: nodesToSave as any,
-         edges: edgesToSave
-     };
-
-     await saveWorkflowTemplate(template);
-     setIsWorkflowModalOpen(false);
-     alert(`Workflow "${data.name}" saved to library!`);
+      setNodes([...updatedNodes, groupNode]);
+      setSelectedNodes([]);
   };
 
-  const handleClear = useCallback(() => {
-      setNodes([]);
-      setEdges([]);
-  }, [setNodes, setEdges]);
-  
-  const handleClearClick = useCallback(() => {
-    setShowClearDialog(true);
-  }, []);
+  const handleCreateWorkflow = () => {
+      setIsWorkflowModalOpen(true);
+  };
 
-  const handleAddFromHistory = useCallback((item: HistoryItem) => {
-      const centerX = window.innerWidth / 2 - 150; 
-      const centerY = window.innerHeight / 2 - 150;
-      const offset = Math.random() * 50;
-
-      const newNode: Node<NodeData> = {
-        id: `hist-img-${Date.now()}`,
-        type: NodeType.INPUT_IMAGE, 
-        position: { x: centerX + offset, y: centerY + offset },
-        data: {
-            title: "Asset from History",
-            image: item.imageData.includes(',') ? item.imageData.split(',')[1] : item.imageData, 
-            preview: item.imageData 
-        }
-      };
-      setNodes((nds) => nds.concat(newNode));
-  }, [setNodes]);
-
-  const handleLoadWorkflow = useCallback((template: WorkflowTemplate) => {
-      const centerX = window.innerWidth / 2;
-      const centerY = window.innerHeight / 2;
-
-      const templateNodes = template.nodes as unknown as Node<NodeData>[];
-      const rootNodes = templateNodes.filter(n => !n.parentNode || !templateNodes.find(p => p.id === n.parentNode));
-      const rect = getRectOfNodes(rootNodes.length > 0 ? rootNodes : templateNodes);
+  const saveWorkflow = async (meta: { name: string, tags: string[], description: string }) => {
+      const nodesToSave = selectedNodes.length > 0 ? selectedNodes : nodes;
+      const ids = nodesToSave.map(n => n.id);
+      const edgesToSave = edges.filter(e => ids.includes(e.source) && ids.includes(e.target));
       
-      const offsetX = centerX - (rect.x + rect.width/2);
-      const offsetY = centerY - (rect.y + rect.height/2);
-
-      const idMap = new Map<string, string>();
-      templateNodes.forEach(n => {
-          const newId = `${n.type}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
-          idMap.set(n.id, newId);
+      await saveWorkflowTemplate({
+          name: meta.name,
+          tags: meta.tags,
+          description: meta.description,
+          nodes: nodesToSave,
+          edges: edgesToSave
       });
+      setIsWorkflowModalOpen(false);
+      alert("Workflow saved to library!");
+  };
 
-      const newNodes: Node<NodeData>[] = templateNodes.map(n => {
-          const newId = idMap.get(n.id)!;
-          let newParentNode = n.parentNode;
-          let isChildOfImportedGroup = false;
+  const handleImportWorkflow = useCallback((wf: WorkflowTemplate) => {
+      const idMap = new Map<string, string>();
+      const center = rfInstance ? rfInstance.project({ x: window.innerWidth / 2, y: window.innerHeight / 2 }) : { x: 0, y: 0 };
+      
+      // Calculate offset based on the first node in the workflow to center it
+      const wfFirstNode = wf.nodes[0];
+      const offsetX = wfFirstNode ? center.x - wfFirstNode.position.x : 0;
+      const offsetY = wfFirstNode ? center.y - wfFirstNode.position.y : 0;
 
-          if (newParentNode && idMap.has(newParentNode)) {
-              newParentNode = idMap.get(newParentNode);
-              isChildOfImportedGroup = true;
-          } else {
-              newParentNode = undefined;
-          }
-
-          const position = isChildOfImportedGroup ? n.position : { 
-              x: n.position.x + offsetX, 
-              y: n.position.y + offsetY 
-          };
-
+      const newNodes = wf.nodes.map(n => {
+          const newId = `node_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+          idMap.set(n.id, newId);
           return {
               ...n,
               id: newId,
-              parentNode: newParentNode,
-              extent: (newParentNode ? 'parent' : undefined) as 'parent' | undefined,
-              position: position,
-              selected: true,
-              data: { ...n.data } 
+              selected: false,
+              position: { x: n.position.x + offsetX, y: n.position.y + offsetY },
+              data: {
+                  ...n.data,
+                  onChange: updateNodeData, 
+                  onDelete: deleteNode, 
+                  onRun: handleRunNode, 
+                  onEdit: handleOpenImageEditor,
+                  onAddNext: handleAddNextNode, 
+                  onRunGroup: handleRunGroup,
+                  onUngroup: handleUngroup
+              }
           };
       });
       
-      const newEdges = template.edges.map(e => ({
+      const newEdges = wf.edges.map(e => ({
           ...e,
           id: `e-${idMap.get(e.source)}-${idMap.get(e.target)}`,
-          source: idMap.get(e.source),
-          target: idMap.get(e.target)
+          source: idMap.get(e.source)!,
+          target: idMap.get(e.target)!
       }));
 
-      setNodes((nds) => [...nds.map(n => ({...n, selected: false})), ...newNodes]);
-      setEdges((eds) => [...eds, ...newEdges]);
-      setActiveMenu(null);
-  }, [setNodes, setEdges]);
-  
-  const handleDeleteTemplateClick = (e: React.MouseEvent, id: string) => {
-      e.stopPropagation();
-      setWorkflowDeleteId(id);
-  };
-  
-  const confirmDeleteWorkflow = async () => {
-      if (workflowDeleteId) {
-          await deleteWorkflowTemplate(workflowDeleteId);
-          const updated = await getWorkflowTemplates();
-          setWorkflowTemplates(updated);
-          setWorkflowDeleteId(null);
-      }
-  };
-  
-  // --- Import/Export Workflow Logic ---
-  const handleExportTemplate = (e: React.MouseEvent, template: WorkflowTemplate) => {
-      e.stopPropagation();
-      const jsonString = JSON.stringify(template, null, 2);
-      const blob = new Blob([jsonString], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `${template.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_workflow.json`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-  };
+      setNodes(prev => [...prev.map(n => ({...n, selected: false})), ...newNodes]);
+      setEdges(prev => [...prev, ...newEdges]);
+      setActiveSidebar(null);
+  }, [rfInstance, updateNodeData, deleteNode, handleRunNode, handleOpenImageEditor, handleAddNextNode, handleRunGroup, handleUngroup]);
 
-  const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-          try {
-              const content = event.target?.result as string;
-              const json = JSON.parse(content);
-              
-              if (!json.nodes || !Array.isArray(json.nodes)) {
-                  alert("Invalid workflow file: Missing nodes.");
-                  return;
-              }
-
-              // Strip ID/Date/etc to clean up for import and ensure unique ID creation in storage
-              const { id, createdAt, ...templateData } = json;
-              
-              await saveWorkflowTemplate(templateData);
-              const updated = await getWorkflowTemplates();
-              setWorkflowTemplates(updated);
-          } catch (err) {
-              console.error("Import failed", err);
-              alert("Failed to import workflow. Invalid JSON.");
+  // Re-inject handlers into nodes when they change (only if handlers actually change)
+  useEffect(() => {
+      setNodes(nds => nds.map(n => ({
+          ...n,
+          data: {
+              ...n.data,
+              onChange: updateNodeData,
+              onDelete: deleteNode,
+              onRun: handleRunNode,
+              onEdit: handleOpenImageEditor,
+              onAddNext: handleAddNextNode, 
+              onRunGroup: handleRunGroup,
+              onUngroup: handleUngroup
           }
-      };
-      reader.readAsText(file);
-      e.target.value = ''; // Reset input
-  };
+      })));
+  }, [updateNodeData, deleteNode, handleRunNode, handleAddNextNode, handleRunGroup, handleUngroup, handleOpenImageEditor]);
 
-  const handleCopilotAddNodes = useCallback((newNodesData: any[], newConnections: any[]) => {
-      const centerX = window.innerWidth / 2;
-      const centerY = window.innerHeight / 2;
-      
-      // Calculate positions simply by placing them in a row for now
-      const createdNodes: Node<NodeData>[] = newNodesData.map((n, i) => {
-          const type = n.type || NodeType.GEN_TEXT;
-          let params: any = { model: GeneratorModel.GEMINI_FLASH_TEXT };
-          
-          if (type === NodeType.GEN_IMAGE) {
-              params = { 
-                  model: GeneratorModel.GEMINI_FLASH_IMAGE, 
-                  aspectRatio: "16:9", 
-                  imageSize: "1K", 
-                  numberOfImages: 1 
-              };
-          }
-
-          return {
-              id: `copilot-${Date.now()}-${i}`,
-              type: type,
-              position: { x: centerX + (i * 400), y: centerY },
-              data: {
-                  title: n.label || "AI Node",
-                  text: n.prompt || "",
-                  params: params
-              }
-          };
-      });
-
-      const createdEdges: Edge[] = [];
-      newConnections.forEach(conn => {
-          if (createdNodes[conn.fromIndex] && createdNodes[conn.toIndex]) {
-              createdEdges.push({
-                  id: `e-${createdNodes[conn.fromIndex].id}-${createdNodes[conn.toIndex].id}`,
-                  source: createdNodes[conn.fromIndex].id,
-                  target: createdNodes[conn.toIndex].id,
-                  type: 'deletable',
-                  animated: true,
-                  style: { stroke: '#3b82f6', strokeWidth: 2 }
-              });
-          }
-      });
-
-      setNodes(nds => [...nds, ...createdNodes]);
-      setEdges(eds => [...eds, ...createdEdges]);
-  }, [setNodes, setEdges]);
-
-  const nodesWithHandlers = nodes.map(node => ({
-    ...node,
-    data: {
-      ...node.data,
-      onChange: updateNodeData,
-      onDelete: deleteNode,
-      onRun: handleNodeRun,
-      onAddNext: addNextNode,
-      onEdit: (id: string, url: string) => { setEditingSourceNodeId(id); setEditingImage(url); setIsEditorOpen(true); },
-      onRunGroup: handleRunGroup,
-      onUngroup: handleUngroupNodes,
-      onCreateWorkflow: handleCreateWorkflow
-    }
-  }));
-
-  const addNode = (type: NodeType) => {
-    const centerX = window.innerWidth / 2 - 150;
-    const centerY = window.innerHeight / 2 - 100;
-    
-    let defaultParams: any = {};
-    if (type === NodeType.GEN_IMAGE) {
-        defaultParams = { model: GeneratorModel.GEMINI_FLASH_IMAGE, aspectRatio: "16:9", imageSize: "1K", numberOfImages: 1 };
-    } else if (type === NodeType.GEN_TEXT) {
-        defaultParams = { model: GeneratorModel.GEMINI_FLASH_TEXT };
-    } else {
-        // Fallback for generic calls
-        defaultParams = { model: GeneratorModel.GEMINI_FLASH_IMAGE, aspectRatio: "16:9", imageSize: "1K", numberOfImages: 1 };
-    }
-
-    const id = `${type}-${Date.now()}`;
-    const newNode: Node<NodeData> = {
-      id,
-      type,
-      position: { x: centerX + Math.random() * 50, y: centerY + Math.random() * 50 },
-      data: { 
-        params: defaultParams
-      }
-    };
-    setNodes((nds) => nds.concat(newNode));
-    setActiveMenu(null); 
+  const handleCopilotAddNodes = (newNodes: any[], connections: any[]) => {
+       const timestamp = Date.now();
+       const mappedNodes = newNodes.map((n, i) => ({
+           id: `cp_${timestamp}_${i}`,
+           type: n.type || NodeType.GEN_IMAGE,
+           position: { x: 100 + (i*450), y: 100 + (i * 50) },
+           data: { 
+               title: n.label || 'Copilot Node', 
+               text: n.prompt, 
+               params: { model: GeneratorModel.GEMINI_FLASH_IMAGE },
+               onChange: updateNodeData, 
+               onDelete: deleteNode, 
+               onRun: handleRunNode, 
+               onEdit: handleOpenImageEditor,
+               onAddNext: handleAddNextNode
+           }
+       }));
+       
+       const mappedEdges = (connections || []).map((conn: any) => ({
+           id: `e-cp-${timestamp}-${conn.fromIndex}-${conn.toIndex}`,
+           source: mappedNodes[conn.fromIndex].id,
+           target: mappedNodes[conn.toIndex].id,
+           type: 'deletable',
+           animated: true,
+           style: { stroke: '#3b82f6', strokeWidth: 2, strokeOpacity: 0.8 }
+       }));
+       
+       setNodes(nds => [...nds, ...mappedNodes]);
+       setEdges(eds => [...eds, ...mappedEdges]);
   };
 
   return (
-    <div className="relative w-full h-full bg-black overflow-hidden">
-        <CopilotSidebar 
-            isOpen={isCopilotOpen} 
-            onClose={() => setIsCopilotOpen(false)}
-            onAddNodes={handleCopilotAddNodes}
-        />
-
-        {/* Top Right Controls */}
-        <div className="absolute top-6 right-6 z-50 flex items-center gap-3">
-           <button 
-             onClick={() => setIsCopilotOpen(!isCopilotOpen)}
-             className={`flex items-center gap-2 px-4 py-2 rounded-full border shadow-xl transition-all ${isCopilotOpen ? 'bg-blue-600 border-blue-500 text-white' : 'bg-zinc-900 border-zinc-700 text-zinc-400 hover:text-white'}`}
-           >
-              <Sparkles size={16} />
-              <span className="text-xs font-bold uppercase tracking-wide">Copilot</span>
-           </button>
-           
-           <button 
-              onClick={() => setIsLocked(!isLocked)}
-              className={`w-10 h-10 flex items-center justify-center rounded-full border shadow-xl transition-all ${isLocked ? 'bg-red-500/20 text-red-400 border-red-500/50' : 'bg-zinc-900 border-zinc-700 text-zinc-400 hover:text-white'}`}
-              title={isLocked ? "Unlock Canvas" : "Lock Canvas"}
-           >
-              {isLocked ? <Lock size={16} /> : <Unlock size={16} />}
-           </button>
-        </div>
-
-        {/* Top Left Controls */}
-        <div className="absolute top-6 left-6 z-50 flex items-center gap-4">
-            <button 
-                onClick={onBack}
-                className="w-10 h-10 flex items-center justify-center rounded-full bg-zinc-900 border border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all shadow-xl"
-            >
-                <ArrowLeft size={20} />
-            </button>
-            
-            <div className="flex flex-col">
-                <div className="flex items-center gap-2 group">
-                    {isRenaming ? (
-                        <input 
-                            autoFocus
-                            className="bg-zinc-900 text-white font-bold text-lg px-2 rounded border border-blue-500 outline-none w-64"
-                            value={projectName}
-                            onChange={(e) => setProjectName(e.target.value)}
-                            onBlur={handleRenameProject}
-                            onKeyDown={(e) => e.key === 'Enter' && handleRenameProject()}
-                        />
-                    ) : (
-                        <h1 
-                            className="text-lg font-bold text-white cursor-pointer hover:text-blue-400 transition-colors flex items-center gap-2"
-                            onClick={() => setIsRenaming(true)}
-                        >
-                            {projectName}
-                            <Pencil size={12} className="opacity-0 group-hover:opacity-100 transition-opacity text-zinc-500" />
-                        </h1>
-                    )}
-                </div>
-                <div className="flex items-center gap-2 text-[10px] text-zinc-500 font-mono">
-                    {lastSaved ? (
-                        <span className="flex items-center gap-1.5">
-                            <Check size={10} className="text-green-500" />
-                            Saved {lastSaved.toLocaleTimeString()}
-                        </span>
-                    ) : (
-                        <span>Unsaved</span>
-                    )}
-                </div>
-            </div>
-        </div>
-
-        <ReactFlow
-            nodes={nodesWithHandlers}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onInit={setRfInstance}
-            onSelectionChange={onSelectionChange}
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
-            defaultEdgeOptions={{ type: 'deletable', animated: true, style: { stroke: '#3b82f6', strokeWidth: 2 } }}
-            connectionLineStyle={{ stroke: '#3b82f6', strokeWidth: 2 }}
-            minZoom={0.1}
-            maxZoom={2}
-            className="bg-black"
-            proOptions={{ hideAttribution: true }}
-            panOnDrag={isLocked ? false : [2]}
-            selectionOnDrag={!isLocked}
-            panOnScroll={!isLocked}
-            zoomOnScroll={false}
-            zoomOnPinch={!isLocked}
-            selectionMode={SelectionMode.Partial}
-            onPaneClick={onPaneClick}
-            onNodeContextMenu={onNodeContextMenu}
-        >
-            <Background color="#27272a" gap={20} size={1} variant={BackgroundVariant.Dots} />
-            <MiniMap 
-                nodeStrokeColor="#3f3f46" 
-                nodeColor="#18181b" 
-                maskColor="rgba(0, 0, 0, 0.7)"
-                className="!bg-zinc-900 !border !border-zinc-800 !rounded-xl !bottom-6 !left-6 !w-40 !h-40"
-            />
-            {/* New Floating Selection Menu */}
-            <SelectionOverlay 
-                selectedNodes={selectedNodes} 
-                onCluster={handleGroupNodes}
-                onRunSeq={handleRunSelectedSequence}
-                onSave={() => handleCreateWorkflow()}
-                onUngroup={() => handleUngroupNodes()}
-            />
-        </ReactFlow>
-
-        {/* Clear Dialog Confirmation Modal */}
-        {showClearDialog && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 shadow-2xl max-w-sm w-full transform scale-100 flex flex-col gap-4 animate-in zoom-in-95 duration-200">
-              <div className="flex items-center gap-3 text-white">
-                 <div className="w-10 h-10 rounded-full bg-red-500/10 flex items-center justify-center text-red-500 border border-red-500/20">
-                    <AlertTriangle size={20} />
-                 </div>
-                 <h3 className="text-lg font-bold">Clear Canvas?</h3>
-              </div>
-              
-              <p className="text-zinc-400 text-sm leading-relaxed">
-                Are you sure you want to delete all nodes and connections? This action cannot be undone.
-              </p>
-              
-              <div className="flex justify-end gap-3 mt-2">
-                <button 
-                  onClick={() => setShowClearDialog(false)}
-                  className="px-4 py-2 rounded-lg text-zinc-300 hover:text-white hover:bg-zinc-800 transition-colors text-sm font-medium border border-transparent hover:border-zinc-700"
-                >
-                  Cancel
-                </button>
-                <button 
-                  onClick={() => {
-                    handleClear();
-                    setShowClearDialog(false);
-                  }}
-                  className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-900/20 text-sm font-bold flex items-center gap-2"
-                >
-                  <Trash2 size={16} />
-                  Clear All
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-        
-        {/* Workflow Delete Confirmation Modal */}
-        {workflowDeleteId && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setWorkflowDeleteId(null)}>
-            <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 shadow-2xl max-w-sm w-full transform scale-100 flex flex-col gap-4 animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
-              <div className="flex items-center gap-3 text-white">
-                 <div className="w-10 h-10 rounded-full bg-red-500/10 flex items-center justify-center text-red-500 border border-red-500/20">
-                    <AlertTriangle size={20} />
-                 </div>
-                 <h3 className="text-lg font-bold">Delete Workflow?</h3>
-              </div>
-              
-              <p className="text-zinc-400 text-sm leading-relaxed">
-                Are you sure you want to delete this workflow template from your library?
-              </p>
-              
-              <div className="flex justify-end gap-3 mt-2">
-                <button 
-                  onClick={() => setWorkflowDeleteId(null)}
-                  className="px-4 py-2 rounded-lg text-zinc-300 hover:text-white hover:bg-zinc-800 transition-colors text-sm font-medium border border-transparent hover:border-zinc-700"
-                >
-                  Cancel
-                </button>
-                <button 
-                  onClick={confirmDeleteWorkflow}
-                  className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-900/20 text-sm font-bold flex items-center gap-2"
-                >
-                  <Trash2 size={16} />
-                  Delete
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Right Click Context Menu (Simplified, now mostly replaced by Floating Menu but kept for backup/direct delete) */}
-        {contextMenu && (
-           <div 
-             style={{ top: contextMenu.y, left: contextMenu.x }} 
-             className="fixed z-[100] bg-zinc-950/95 border border-zinc-700 rounded-lg shadow-2xl p-1.5 w-48 flex flex-col gap-1 backdrop-blur-md animate-in fade-in zoom-in-95 duration-100"
-           >
-               <button onClick={handleDeleteSelected} className="flex items-center gap-2 px-3 py-2 hover:bg-red-500/20 rounded-md text-xs font-medium text-red-400 hover:text-red-300 transition-colors">
-                  <Trash2 size={14}/> 
-                  Delete Selection
-               </button>
-           </div>
-        )}
-
-        {/* Bottom Dock Menu - INCREASED Z-INDEX TO z-[60] */}
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-[60] flex flex-col items-center gap-4">
-             {/* Sub Menus */}
-             {activeMenu === 'add' && (
-                 <div className="flex items-center gap-2 bg-zinc-900/90 border border-zinc-700 p-2 rounded-2xl shadow-2xl backdrop-blur-xl animate-in slide-in-from-bottom-2 mb-2">
-                     <button onClick={() => addNode(NodeType.GEN_IMAGE)} className="flex flex-col items-center gap-1 p-3 rounded-xl hover:bg-white/10 transition-all w-20 group">
-                         <div className="w-8 h-8 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-400 group-hover:scale-110 transition-transform"><Sparkles size={16} /></div>
-                         <span className="text-[10px] font-bold text-zinc-400 group-hover:text-white">Generator</span>
-                     </button>
-                     <button onClick={() => addNode(NodeType.GEN_TEXT)} className="flex flex-col items-center gap-1 p-3 rounded-xl hover:bg-white/10 transition-all w-20 group">
-                         <div className="w-8 h-8 rounded-full bg-amber-500/10 flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform"><MessageSquareText size={16} /></div>
-                         <span className="text-[10px] font-bold text-zinc-400 group-hover:text-white">Text Gen</span>
-                     </button>
-                     <div className="w-px h-8 bg-white/10" />
-                     <button onClick={() => addNode(NodeType.INPUT_TEXT)} className="flex flex-col items-center gap-1 p-3 rounded-xl hover:bg-white/10 transition-all w-20 group">
-                         <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400 group-hover:text-white group-hover:scale-110 transition-transform"><Type size={16} /></div>
-                         <span className="text-[10px] font-bold text-zinc-400 group-hover:text-white">Text</span>
-                     </button>
-                     <button onClick={() => addNode(NodeType.INPUT_IMAGE)} className="flex flex-col items-center gap-1 p-3 rounded-xl hover:bg-white/10 transition-all w-20 group">
-                         <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400 group-hover:text-white group-hover:scale-110 transition-transform"><ImageIcon size={16} /></div>
-                         <span className="text-[10px] font-bold text-zinc-400 group-hover:text-white">Image</span>
-                     </button>
-                 </div>
-             )}
-
-             {activeMenu === 'history' && (
-                 <div className="bg-zinc-900/90 border border-zinc-700 p-3 rounded-2xl shadow-2xl backdrop-blur-xl animate-in slide-in-from-bottom-2 mb-2 w-[400px]">
-                      <div className="flex items-center justify-between mb-2 px-1">
-                          <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">History</span>
-                          <button onClick={() => setActiveMenu(null)}><X size={14} className="text-zinc-500" /></button>
-                      </div>
-                      <div className="grid grid-cols-4 gap-2 max-h-[200px] overflow-y-auto custom-scrollbar">
-                          {historyItems.map(item => (
-                              <button key={item.id} onClick={() => handleAddFromHistory(item)} className="aspect-square rounded-lg overflow-hidden border border-white/5 hover:border-blue-500 relative group bg-black/20">
-                                  <img src={item.imageData.startsWith('data:') ? item.imageData : `data:image/png;base64,${item.imageData}`} className="w-full h-full object-contain" />
-                                  <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                      <Plus size={16} className="text-white" />
-                                  </div>
-                              </button>
-                          ))}
-                      </div>
-                 </div>
-             )}
-
-            {activeMenu === 'workflows' && (
-                 <div className="bg-zinc-900/90 border border-zinc-700 p-3 rounded-2xl shadow-2xl backdrop-blur-xl animate-in slide-in-from-bottom-2 mb-2 w-[300px]">
-                      <div className="flex items-center justify-between mb-2 px-1 border-b border-white/5 pb-2">
-                          <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Library</span>
-                          <div className="flex items-center gap-3">
-                              <label className="cursor-pointer text-zinc-500 hover:text-blue-400 transition-colors flex items-center gap-1" title="Import JSON">
-                                  <Upload size={12} />
-                                  <span className="text-[9px] font-bold uppercase">Import</span>
-                                  <input type="file" accept=".json" className="hidden" onChange={handleImportFile} />
-                              </label>
-                              <div className="w-px h-3 bg-white/10"></div>
-                              <button onClick={() => setActiveMenu(null)}><X size={14} className="text-zinc-500 hover:text-white" /></button>
-                          </div>
-                      </div>
-                      <div className="space-y-2 max-h-[200px] overflow-y-auto custom-scrollbar">
-                          {workflowTemplates.length === 0 && <div className="text-center py-4 text-xs text-zinc-500">No saved templates</div>}
-                          {workflowTemplates.map(wf => (
-                              <div key={wf.id} className="flex items-center justify-between p-2 rounded-lg bg-black/20 hover:bg-white/5 group">
-                                  <button onClick={() => handleLoadWorkflow(wf)} className="flex-1 text-left">
-                                      <div className="text-xs font-bold text-zinc-300 group-hover:text-white">{wf.name}</div>
-                                      <div className="text-[9px] text-zinc-500">{wf.nodes.length} nodes</div>
-                                  </button>
-                                  <div className="flex items-center gap-1">
-                                      <button onClick={(e) => handleExportTemplate(e, wf)} className="text-zinc-600 hover:text-blue-400 p-1.5 hover:bg-white/5 rounded transition-colors" title="Export JSON">
-                                          <Download size={12}/>
-                                      </button>
-                                      <button onClick={(e) => handleDeleteTemplateClick(e, wf.id)} className="text-zinc-600 hover:text-red-400 p-1.5 hover:bg-red-500/10 rounded transition-colors" title="Delete">
-                                          <Trash2 size={12}/>
-                                      </button>
-                                  </div>
-                              </div>
-                          ))}
-                      </div>
-                 </div>
-             )}
-
-             {/* Main Bar */}
-             <div className="flex items-center gap-2 bg-zinc-950/80 border border-zinc-800 p-1.5 rounded-full shadow-2xl backdrop-blur-xl">
-                 <button 
-                    onClick={() => setActiveMenu(activeMenu === 'add' ? null : 'add')}
-                    className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${activeMenu === 'add' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700'}`}
-                    title="Add Node"
-                 >
-                    <Plus size={24} />
+    <div className="w-full h-full bg-[#09090b] text-white flex flex-col relative overflow-hidden">
+        {/* Header Bar */}
+        <div className="h-16 border-b border-white/5 bg-[#18181b]/50 backdrop-blur-md flex items-center justify-between px-6 z-10 shrink-0">
+             <div className="flex items-center gap-4">
+                 <button onClick={onBack} className="p-2 hover:bg-white/10 rounded-xl transition-colors text-zinc-400 hover:text-white">
+                     <ArrowLeft size={20} />
                  </button>
-                 
-                 <div className="w-px h-8 bg-zinc-800 mx-1" />
-                 
-                 <button 
-                    onClick={() => {
-                        setActiveMenu(activeMenu === 'history' ? null : 'history');
-                        if(activeMenu !== 'history') getHistory().then(setHistoryItems);
-                    }}
-                    className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${activeMenu === 'history' ? 'bg-purple-600 text-white' : 'hover:bg-zinc-800 text-zinc-400 hover:text-white'}`}
-                    title="History"
-                 >
-                    <Clock size={18} />
-                 </button>
+                 <div className="h-6 w-px bg-white/10" />
+                 {isRenaming ? (
+                     <input 
+                        autoFocus
+                        className="bg-transparent border border-blue-500/50 rounded px-2 py-0.5 text-lg font-bold text-white outline-none"
+                        value={projectName}
+                        onChange={e => setProjectName(e.target.value)}
+                        onBlur={handleRenameProject}
+                        onKeyDown={e => e.key === 'Enter' && handleRenameProject()}
+                     />
+                 ) : (
+                     <h1 
+                        className="text-lg font-bold text-white cursor-pointer hover:text-blue-400 transition-colors flex items-center gap-2"
+                        onClick={() => setIsRenaming(true)}
+                     >
+                         {projectName}
+                         <Pencil size={12} className="opacity-0 hover:opacity-100 text-zinc-500" />
+                     </h1>
+                 )}
+             </div>
 
-                 <button 
-                    onClick={() => {
-                        setActiveMenu(activeMenu === 'workflows' ? null : 'workflows');
-                        if(activeMenu !== 'workflows') getWorkflowTemplates().then(setWorkflowTemplates);
-                    }}
-                    className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${activeMenu === 'workflows' ? 'bg-green-600 text-white' : 'hover:bg-zinc-800 text-zinc-400 hover:text-white'}`}
-                    title="Workflows"
-                 >
-                    <Workflow size={18} />
-                 </button>
-                 
-                 <div className="w-px h-8 bg-zinc-800 mx-1" />
-
-                 <button 
-                    onClick={handleClearClick}
-                    className="w-10 h-10 rounded-full flex items-center justify-center transition-all hover:bg-red-500/10 text-zinc-400 hover:text-red-400"
-                    title="Clear Canvas"
-                 >
-                    <Trash2 size={18} />
+             <div className="flex items-center gap-3">
+                 <div className="flex bg-zinc-900 rounded-lg p-1 border border-white/5">
+                     <button className="px-3 py-1.5 rounded-md hover:bg-white/10 text-xs font-bold text-zinc-400 hover:text-white transition-colors" onClick={() => setIsCopilotOpen(!isCopilotOpen)}>
+                        <Sparkles size={14} className={`inline mr-2 ${isCopilotOpen ? 'text-blue-400' : ''}`} />
+                        Copilot
+                     </button>
+                     <div className="w-px h-full bg-white/5 mx-1" />
+                     <button className="px-3 py-1.5 rounded-md hover:bg-white/10 text-xs font-bold text-zinc-400 hover:text-white transition-colors" onClick={handleCreateWorkflow}>
+                        <Workflow size={14} className="inline mr-2" />
+                        Save Workflow
+                     </button>
+                 </div>
+                 <button onClick={onOpenSettings} className="p-2 hover:bg-white/10 rounded-lg text-zinc-400 hover:text-white transition-colors">
+                     <Grid size={20} />
                  </button>
              </div>
         </div>
 
+        {/* Sidebar Dock & Panel */}
+        <div className="absolute left-6 top-24 bottom-6 z-20 flex gap-4 pointer-events-none">
+            {/* Toolbar */}
+            <div className="flex flex-col gap-2 pointer-events-auto">
+               <button 
+                   onClick={() => setActiveSidebar(activeSidebar === 'add' ? null : 'add')}
+                   className={`w-12 h-12 rounded-xl flex items-center justify-center border transition-all shadow-lg ${activeSidebar === 'add' ? 'bg-blue-600 text-white border-blue-500' : 'bg-[#18181b] border-white/10 text-zinc-400 hover:text-white hover:bg-white/10'}`}
+                   title="Add Nodes"
+               >
+                   <Plus size={24} />
+               </button>
+               <button 
+                   onClick={() => setActiveSidebar(activeSidebar === 'workflows' ? null : 'workflows')}
+                   className={`w-12 h-12 rounded-xl flex items-center justify-center border transition-all shadow-lg ${activeSidebar === 'workflows' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-[#18181b] border-white/10 text-zinc-400 hover:text-white hover:bg-white/10'}`}
+                   title="Workflow Library"
+               >
+                   <LayoutTemplate size={20} />
+               </button>
+               <button 
+                   onClick={() => setActiveSidebar(activeSidebar === 'history' ? null : 'history')}
+                   className={`w-12 h-12 rounded-xl flex items-center justify-center border transition-all shadow-lg ${activeSidebar === 'history' ? 'bg-emerald-600 text-white border-emerald-500' : 'bg-[#18181b] border-white/10 text-zinc-400 hover:text-white hover:bg-white/10'}`}
+                   title="History"
+               >
+                   <History size={20} />
+               </button>
+            </div>
+
+            {/* Panel */}
+            <EditorSidebar 
+                activeTab={activeSidebar} 
+                onClose={() => setActiveSidebar(null)}
+                onAddNode={handleAddNode}
+                onImportWorkflow={handleImportWorkflow}
+            />
+        </div>
+
+        {/* Canvas Area */}
+        <div className="flex-1 w-full h-full relative" onContextMenu={onPaneContextMenu} onClick={onPaneClick}>
+            <ReactFlow
+                nodes={nodes}
+                edges={edges}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={onConnect}
+                onConnectStart={onConnectStart}
+                onConnectEnd={onConnectEnd}
+                onNodeContextMenu={onNodeContextMenu}
+                onSelectionChange={onSelectionChange}
+                nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
+                onInit={setRfInstance}
+                minZoom={0.1}
+                maxZoom={2}
+                selectionMode={SelectionMode.Partial}
+                deleteKeyCode={['Delete', 'Backspace']}
+                multiSelectionKeyCode={['Control', 'Meta']}
+                panOnScroll
+                selectionOnDrag
+                panOnDrag={[1, 2]} // Middle or Right click pan
+                fitView
+            >
+                <Background color="#222" gap={24} size={1} variant={BackgroundVariant.Dots} />
+                <Controls className="bg-zinc-900 border border-white/10 text-zinc-400 fill-zinc-400" />
+                
+                {contextMenu && (
+                    <ContextMenu 
+                        x={contextMenu.x} 
+                        y={contextMenu.y} 
+                        onClose={() => setContextMenu(null)}
+                        onAddNode={(type) => handleAddNode(type, { x: contextMenu.x, y: contextMenu.y })}
+                        onAutoLayout={handleAutoLayout}
+                    />
+                )}
+            </ReactFlow>
+
+            {/* Overlays */}
+            <SelectionOverlay 
+                selectedNodes={selectedNodes}
+                onCluster={handleGroupSelection}
+                onRunSeq={() => handleRunGroup(selectedNodes[0].id)}
+                onSave={handleCreateWorkflow}
+                onUngroup={handleUngroup}
+                onDelete={() => selectedNodes.forEach(n => deleteNode(n.id))}
+            />
+        </div>
+
+        {/* Sidebars & Modals */}
+        {isCopilotOpen && (
+            <CopilotSidebar 
+                isOpen={isCopilotOpen} 
+                onClose={() => setIsCopilotOpen(false)}
+                onAddNodes={handleCopilotAddNodes}
+            />
+        )}
+
         <ImageEditor 
-            isOpen={isEditorOpen}
+            isOpen={!!editingImage}
             imageUrl={editingImage}
-            onClose={() => setIsEditorOpen(false)}
-            onSave={(newImage) => {
-                if (editingSourceNodeId) {
-                    updateNodeData(editingSourceNodeId, { result: newImage });
-                }
-                setIsEditorOpen(false);
-            }}
+            onClose={() => setEditingImage(null)}
+            onSave={handleSaveEditedImage}
         />
 
         <WorkflowModal 
             isOpen={isWorkflowModalOpen}
             onClose={() => setIsWorkflowModalOpen(false)}
-            onSave={handleSaveModalConfirm}
+            onSave={saveWorkflow}
         />
-
     </div>
+  );
+};
+
+// Wrapper ensuring ReactFlowProvider exists for useViewport hook in overlays
+export const NodeEditor: React.FC<NodeEditorProps> = (props) => {
+  return (
+    <ReactFlowProvider>
+      <NodeEditorContent {...props} />
+    </ReactFlowProvider>
   );
 };

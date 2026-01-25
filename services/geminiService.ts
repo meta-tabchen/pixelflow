@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Modality } from "@google/genai";
-import { GeneratorModel, GenerateImageParams, GenerateTextParams } from "../types";
+import { GeneratorModel, GenerateImageParams, GenerateTextParams, GenerateSearchParams } from "../types";
 import { getUserApiKey } from "./storageService";
 
 // Helper to get the current valid API key
@@ -132,10 +132,6 @@ const generateSingleImage = async (params: GenerateImageParams): Promise<string[
         config: config
       });
 
-      // --- DEBUG LOGS START ---
-      console.log(">>> [GeminiService] RAW RESPONSE OBJECT:", response);
-      // --- DEBUG LOGS END ---
-
       const images: string[] = [];
 
       if (response.candidates) {
@@ -184,7 +180,7 @@ export const generateImageContent = async (params: GenerateImageParams): Promise
   }
 };
 
-// --- NEW Text Generation ---
+// --- NEW Text Generation with Thinking ---
 export const generateTextContent = async (params: GenerateTextParams): Promise<string> => {
   if (isKeyRequired()) {
      throw new Error("DEMO_KEY_RESTRICTION");
@@ -209,14 +205,58 @@ export const generateTextContent = async (params: GenerateTextParams): Promise<s
 
       parts.push({ text: params.prompt });
 
+      const config: any = {};
+      
+      // Add Thinking Budget if specified (Only for 2.5/3 models)
+      if (params.thinkingBudget && params.thinkingBudget > 0) {
+          config.thinkingConfig = { thinkingBudget: params.thinkingBudget };
+      }
+
       const response = await ai.models.generateContent({
           model: params.model,
-          contents: { parts }
+          contents: { parts },
+          config
       });
 
       return response.text || "";
   });
 };
+
+// --- NEW Search Generation ---
+export const generateSearchContent = async (params: GenerateSearchParams): Promise<{ text: string, sources?: {uri: string, title: string}[] }> => {
+    if (isKeyRequired()) {
+        throw new Error("DEMO_KEY_RESTRICTION");
+    }
+
+    return withRetry(async () => {
+        const ai = getAI();
+        const response = await ai.models.generateContent({
+            model: 'gemini-3-pro-preview', // Search works best/only with Pro
+            contents: params.query,
+            config: {
+                tools: [{ googleSearch: {} }]
+            }
+        });
+
+        // Extract Sources from Grounding Metadata
+        const sources: {uri: string, title: string}[] = [];
+        const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+        
+        if (chunks) {
+            chunks.forEach((chunk: any) => {
+                if (chunk.web) {
+                    sources.push({ uri: chunk.web.uri, title: chunk.web.title });
+                }
+            });
+        }
+
+        return {
+            text: response.text || "No result found.",
+            sources: sources.length > 0 ? sources : undefined
+        };
+    });
+};
+
 
 export const optimizePrompt = async (rawPrompt: string): Promise<string> => {
   if (isKeyRequired()) {

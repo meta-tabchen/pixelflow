@@ -1,6 +1,7 @@
 
+
 import React, { useState, useRef, useEffect } from 'react';
-import { X, MessageSquare, Send, Sparkles, Wand2, Loader2, Play, ChevronDown, Zap, Cpu, Image as ImageIcon, Paperclip, Trash2, Workflow, MessageCircle, Ratio, Monitor, Save } from 'lucide-react';
+import { X, MessageSquare, Send, Sparkles, Wand2, Loader2, Play, ChevronDown, Zap, Cpu, Image as ImageIcon, Paperclip, Workflow, MessageCircle, Ratio, Monitor, Save, Trash2 } from 'lucide-react';
 import { getAI, fileToBase64 } from '../../services/geminiService';
 import { NodeType, GeneratorModel } from '../../types';
 import { Type, Content, Part } from "@google/genai";
@@ -107,13 +108,6 @@ export const CopilotSidebar: React.FC<CopilotSidebarProps> = ({ isOpen, onClose,
   const activeModel = COPILOT_MODELS.find(m => m.id === activeModelId) || COPILOT_MODELS[0];
   const availableModels = mode === 'workflow' ? COPILOT_MODELS.filter(m => m.mode === 'text') : COPILOT_MODELS;
 
-  const handleClearHistory = () => {
-      if (confirm("Clear chat history?")) {
-          setMessages([{ role: 'model', content: "Chat history cleared." }]);
-          localStorage.removeItem('pixelflow_copilot_history');
-      }
-  };
-
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
       if (e.target.files && e.target.files.length > 0) {
           const newImages: string[] = [];
@@ -133,6 +127,11 @@ export const CopilotSidebar: React.FC<CopilotSidebarProps> = ({ isOpen, onClose,
 
   const removeAttachment = (index: number) => {
       setAttachedImages(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const clearHistory = () => {
+      setMessages([{ role: 'model', content: "Hi! I'm your PixelFlow Copilot. Switch between 'Chat' for help & generation, or 'Workflow' to build node graphs." }]);
+      localStorage.removeItem('pixelflow_copilot_history');
   };
 
   const handleSend = async (text: string = input) => {
@@ -195,7 +194,7 @@ export const CopilotSidebar: React.FC<CopilotSidebarProps> = ({ isOpen, onClose,
           const chat = ai.chats.create({
             model: workflowModel,
             config: {
-                systemInstruction: "You are an AI Workflow Architect for PixelFlow. Your GOAL is to interpret the user's request and build a node-based workflow using the `create_workflow` tool. Do not just chat; build the workflow.",
+                systemInstruction: "You are an AI Workflow Architect for PixelFlow. Your GOAL is to interpret the user's request and build a node-based workflow using the `create_workflow` tool. Do not just chat; build the workflow.\n\nCRITICAL: When connecting nodes, if a downstream node uses the result of an upstream node, you MUST refer to it in the prompt using `{{node 0}}`, `{{node 1}}`, etc. IMPORTANT: The index `0` refers to the first node connected to THIS node (incoming connection), NOT the global index of the node in the list. For example, if Node C receives input from Node A, Node C's prompt should use `{{node 0}}` regardless of Node A's global index.",
                 tools: [{ functionDeclarations: [createWorkflowTool as any] }]
             }
           });
@@ -348,9 +347,9 @@ export const CopilotSidebar: React.FC<CopilotSidebarProps> = ({ isOpen, onClose,
             
             <div className="flex items-center gap-1">
                 <button 
-                    onClick={handleClearHistory} 
-                    className="p-2 hover:bg-white/10 rounded-lg text-zinc-400 hover:text-red-400 transition-colors"
-                    title="Clear History"
+                  onClick={clearHistory}
+                  className="p-2 hover:bg-white/10 rounded-lg text-zinc-400 hover:text-white transition-colors"
+                  title="Clear History"
                 >
                     <Trash2 size={16} />
                 </button>
