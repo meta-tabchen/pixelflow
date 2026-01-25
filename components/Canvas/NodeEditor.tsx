@@ -578,6 +578,7 @@ const NodeEditorContent: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
   }, []);
 
   const updateNodeData = useCallback((id: string, newData: Partial<NodeData>) => {
+    // 1. Update React State
     setNodes((nds) => 
       nds.map((node) => {
         if (node.id === id) {
@@ -598,6 +599,21 @@ const NodeEditorContent: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
         return node;
       })
     );
+
+    // 2. Synchronously Update Ref for Logic Execution cycles
+    // This allows sequential execution (like Group Run) to see updates immediately
+    const refNode = nodesRef.current.find(n => n.id === id);
+    if (refNode) {
+        if (newData.params && refNode.data.params) {
+            refNode.data = { 
+                 ...refNode.data, 
+                 ...newData, 
+                 params: { ...refNode.data.params, ...newData.params } 
+            };
+        } else {
+            refNode.data = { ...refNode.data, ...newData };
+        }
+    }
   }, [setNodes]);
 
   const deleteNode = useCallback((id: string) => {
@@ -629,36 +645,29 @@ const NodeEditorContent: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
   }, [nodes, edges, setNodes, setEdges, rfInstance]);
 
   // --- Execution Logic ---
-  // Important: processNode is memoized and uses refs for data access to prevent infinite loops in effects
-  const processNode = useCallback(async (nodeId: string, visited = new Set<string>()): Promise<any> => {
-      if (visited.has(nodeId)) return;
-      visited.add(nodeId);
-
+  
+  // Core Execution Function that runs a node WITHOUT checking deps recursively
+  // It pulls data from upstream inputs, runs the API, and updates state.
+  const executeNode = useCallback(async (nodeId: string) => {
       const node = nodesRef.current.find(n => n.id === nodeId);
       if (!node) return;
 
-      // 1. Process Dependencies (Upstream)
+      // 1. Gather Inputs
       const inputEdges = edgesRef.current.filter(e => e.target === nodeId);
       const inputNodes = inputEdges
         .map(e => nodesRef.current.find(n => n.id === e.source))
         .filter(Boolean) as Node[];
       
+      // Sort by Y for stable order input (top-down)
       inputNodes.sort((a, b) => a.position.y - b.position.y);
 
       const inputValues: string[] = [];
-      
       for (const inputNode of inputNodes) {
-          if ((inputNode.type === NodeType.GEN_IMAGE || inputNode.type === NodeType.GEN_TEXT || inputNode.type === NodeType.GEN_SEARCH) && !inputNode.data.result) {
-              await processNode(inputNode.id, visited);
-          }
-          const freshInputNode = nodesRef.current.find(n => n.id === inputNode.id);
-          if (freshInputNode) {
-              const val = freshInputNode.data.result || freshInputNode.data.image || freshInputNode.data.text;
-              if (val) inputValues.push(val);
-          }
+          const val = inputNode.data.result || inputNode.data.image || inputNode.data.text;
+          if (val) inputValues.push(val);
       }
 
-      // 2. Execute Current Node
+      // 2. Run API
       if (node.type === NodeType.GEN_IMAGE) {
           updateNodeData(nodeId, { isLoading: true, error: undefined });
           try {
@@ -737,29 +746,91 @@ const NodeEditorContent: React.FC<NodeEditorProps> = ({ projectId, onBack, onOpe
       }
   }, [updateNodeData]);
 
+  // Handles "Pull" logic for Single Node runs: Check deps, if cached use it, else run it.
+  const processNode = useCallback(async (nodeId: string, visited = new Set<string>()): Promise<any> => {
+      if (visited.has(nodeId)) return;
+      visited.add(nodeId);
+
+      // 1. Recursively ensure upstream deps have results
+      const inputEdges = edgesRef.current.filter(e => e.target === nodeId);
+      for (const edge of inputEdges) {
+          const sourceNode = nodesRef.current.find(n => n.id === edge.source);
+          // Only auto-run generator upstream nodes if they are missing results
+          if (sourceNode && (sourceNode.type === NodeType.GEN_IMAGE || sourceNode.type === NodeType.GEN_TEXT || sourceNode.type === NodeType.GEN_SEARCH)) {
+              if (!sourceNode.data.result) {
+                  await processNode(sourceNode.id, visited);
+              }
+          }
+      }
+
+      // 2. Execute Current Node
+      await executeNode(nodeId);
+  }, [executeNode]);
+
   const handleRunNode = useCallback(async (id: string) => {
       await processNode(id);
   }, [processNode]);
 
+  // Handles "Group" logic: Topologically sort and run ALL nodes in the group sequentially (Push logic)
+  // This effectively regenerates the group flow from scratch.
   const handleRunGroup = useCallback(async (groupId: string) => {
-      const currentNodes = nodesRef.current;
-      const currentEdges = edgesRef.current;
+      const groupNodes = nodesRef.current.filter(n => n.parentNode === groupId);
+      const groupNodeIds = new Set(groupNodes.map(n => n.id));
+      
+      // Build adjacency list for group nodes only
+      const adjacency = new Map<string, string[]>();
+      const inDegree = new Map<string, number>();
+      
+      groupNodes.forEach(n => {
+          adjacency.set(n.id, []);
+          inDegree.set(n.id, 0);
+      });
 
-      const groupNodes = currentNodes.filter(n => n.parentNode === groupId);
-      const groupNodeIds = groupNodes.map(n => n.id);
-      
-      const internalEdges = currentEdges.filter(e => groupNodeIds.includes(e.source) && groupNodeIds.includes(e.target));
-      const hasOutput = new Set(internalEdges.map(e => e.source));
-      
-      // Leaf nodes in the context of the group (end of chain within group)
-      const leafs = groupNodes.filter(n => !hasOutput.has(n.id));
-      
-      for (const leaf of leafs) {
-          if (leaf.type.startsWith('GEN_')) {
-              await processNode(leaf.id);
+      const internalEdges = edgesRef.current.filter(e => 
+          groupNodeIds.has(e.source) && groupNodeIds.has(e.target)
+      );
+
+      internalEdges.forEach(e => {
+          adjacency.get(e.source)?.push(e.target);
+          inDegree.set(e.target, (inDegree.get(e.target) || 0) + 1);
+      });
+
+      // Kahn's Algorithm for Topological Sort
+      const queue: string[] = [];
+      groupNodes.forEach(n => {
+          if ((inDegree.get(n.id) || 0) === 0) {
+              queue.push(n.id);
+          }
+      });
+
+      const sortedIds: string[] = [];
+      while (queue.length > 0) {
+          const id = queue.shift()!;
+          sortedIds.push(id);
+          
+          const neighbors = adjacency.get(id) || [];
+          for (const neighbor of neighbors) {
+              inDegree.set(neighbor, (inDegree.get(neighbor) || 0) - 1);
+              if (inDegree.get(neighbor) === 0) {
+                  queue.push(neighbor);
+              }
           }
       }
-  }, [processNode]);
+
+      // Append any remaining nodes (cycles) just in case
+      const missing = groupNodes.filter(n => !sortedIds.includes(n.id));
+      sortedIds.push(...missing.map(n => n.id));
+
+      // Execution Phase
+      for (const nodeId of sortedIds) {
+          const node = nodesRef.current.find(n => n.id === nodeId);
+          // Only run generator nodes. 
+          if (node && (node.type === NodeType.GEN_IMAGE || node.type === NodeType.GEN_TEXT || node.type === NodeType.GEN_SEARCH)) {
+              await executeNode(nodeId);
+          }
+      }
+
+  }, [executeNode]);
 
   const handleOpenImageEditor = useCallback((nodeId: string, imgData: string) => {
       setEditingSourceNodeId(nodeId);
