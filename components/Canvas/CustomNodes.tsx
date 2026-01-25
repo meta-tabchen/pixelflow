@@ -762,7 +762,7 @@ const GenImageNode = ({ data, selected, id }: NodeProps) => {
                                         <cmd.icon size={14} className={index === commandIndex ? 'text-white' : 'text-zinc-500'} />
                                         <div className="flex-1">
                                             <div className="text-[10px] font-bold uppercase tracking-wider">{cmd.label}</div>
-                                            <div className={`text-[9px] truncate ${index === commandIndex ? 'text-white/70' : 'text-zinc-500'}`}>{cmd.desc}</div>
+                                            <div className="text-[9px] text-zinc-500">{cmd.desc}</div>
                                         </div>
                                     </button>
                                 ))}
@@ -915,7 +915,7 @@ const InputTextNode = ({ data, id }: NodeProps) => {
     )
 }
 
-const InputImageNode = ({ data, id }: NodeProps) => {
+const InputImageNode = ({ data, selected, id }: NodeProps) => {
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
              const file = e.target.files[0];
@@ -927,24 +927,59 @@ const InputImageNode = ({ data, id }: NodeProps) => {
         }
     };
 
+    const statusStyles = selected ? 'ring-1 ring-purple-500/50 shadow-[0_0_50px_-10px_rgba(168,85,247,0.3)]' : CARD_HOVER_BORDER;
+
     return (
-        <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-3 min-w-[200px] shadow-lg">
-             <div className="flex items-center gap-2 mb-2 text-zinc-400 text-xs font-bold uppercase tracking-wider">
-                 <ImageIcon size={12} />
+        <div className={`relative group/node ${CARD_BG} ${CARD_BORDER} border ${CARD_RADIUS} w-[300px] shadow-2xl transition-all duration-300 ${statusStyles}`}>
+             {/* Title */}
+             <div className="absolute -top-7 left-1 z-10 flex items-center gap-2">
+                 <ImageIcon size={12} className="text-purple-400" />
                  <NodeTitle title={data.title} onChange={(val) => data.onChange?.(id, { title: val })} placeholder="INPUT IMAGE" />
              </div>
-             <div className="relative aspect-video bg-black/30 border border-white/5 rounded-lg flex items-center justify-center overflow-hidden group">
-                 {data.image ? (
-                     <img src={data.image} className="w-full h-full object-contain" />
-                 ) : (
-                     <div className="text-center p-4">
-                         <Upload size={20} className="mx-auto mb-2 text-zinc-600" />
-                         <span className="text-[10px] text-zinc-500">Upload Image</span>
-                     </div>
-                 )}
-                 <input type="file" accept="image/*" onChange={handleFileChange} className="absolute inset-0 opacity-0 cursor-pointer" />
+             
+             {/* Delete Button (absolute) */}
+              <button 
+                onClick={() => data.onDelete?.(id)}
+                className="absolute -top-8 right-0 p-1.5 text-zinc-600 hover:text-red-400 transition-colors opacity-0 group-hover/node:opacity-100"
+              >
+                <Trash2 size={14} />
+              </button>
+
+             <div className="p-3">
+                 <div className="relative w-full aspect-video bg-black/40 border border-white/5 rounded-xl flex items-center justify-center overflow-hidden group/image transition-colors hover:bg-black/60">
+                     {data.image ? (
+                         <>
+                            <img src={data.image} className="w-full h-full object-contain" />
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); data.onChange?.(id, { image: undefined, result: undefined }); }}
+                                className="absolute top-2 right-2 p-1.5 bg-black/60 text-white/70 hover:text-white rounded-lg opacity-0 group-hover/image:opacity-100 transition-all scale-90 hover:scale-100 shadow-lg"
+                                title="Remove Image"
+                            >
+                                <X size={12} />
+                            </button>
+                         </>
+                     ) : (
+                         <div className="flex flex-col items-center gap-3 text-zinc-600 group-hover/image:text-zinc-500 transition-colors">
+                             <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center border border-white/5 group-hover/image:scale-110 transition-transform">
+                                <Upload size={18} />
+                             </div>
+                             <span className="text-[10px] uppercase tracking-widest font-bold">Upload / Drop</span>
+                         </div>
+                     )}
+                     <input type="file" accept="image/*" onChange={handleFileChange} className="absolute inset-0 opacity-0 cursor-pointer" title="Upload Image" />
+                 </div>
              </div>
-             <Handle type="source" position={Position.Right} className="!bg-zinc-500" />
+
+             <Handle 
+                type="source" 
+                position={Position.Right} 
+                className="!w-6 !h-6 !bg-purple-600 !border-2 !border-black !flex !items-center !justify-center !rounded-full !shadow-[0_0_10px_rgba(168,85,247,0.5)] -right-3 z-50 cursor-crosshair group/handle"
+             >
+                <Plus size={10} className="text-white pointer-events-none" />
+                <div className="absolute left-full ml-2 px-2 py-1 bg-black/80 text-white text-[9px] rounded opacity-0 group-hover/handle:opacity-100 whitespace-nowrap pointer-events-none">
+                    Connect
+                </div>
+            </Handle>
         </div>
     )
 }
