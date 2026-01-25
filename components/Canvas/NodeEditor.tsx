@@ -86,61 +86,85 @@ const SelectionOverlay = ({
     onSave: () => void,
     onUngroup: () => void
 }) => {
-    const { zoom } = useViewport();
+    const { x, y, zoom } = useViewport();
     
     if (selectedNodes.length === 0) return null;
     
-    // Calculate bounding box
+    // Calculate bounding box in canvas space
     const rect = getRectOfNodes(selectedNodes);
     if (!rect) return null;
 
     const hasGroup = selectedNodes.some(n => n.type === NodeType.GROUP);
     const canCluster = selectedNodes.length > 1;
-    // Only show Run Seq if multiple nodes are selected OR if a single Group node is selected
     const showRunSeq = selectedNodes.length > 1 || (selectedNodes.length === 1 && hasGroup);
 
-    // Scale logic to keep the menu size consistent visually regardless of zoom
-    const scale = 1 / Math.max(zoom, 0.1);
-    
+    // Calculate screen position center-top of selection
+    const canvasCenterX = rect.x + rect.width / 2;
+    const canvasTopY = rect.y;
+
+    // Project to screen space
+    const screenLeft = canvasCenterX * zoom + x;
+    const screenTop = canvasTopY * zoom + y;
+
     return (
         <div 
-            className="absolute z-50 origin-bottom left-0 top-0 pointer-events-none"
+            className="absolute z-50 origin-bottom pointer-events-none flex justify-center"
             style={{
-                transform: `translate(${rect.x + rect.width / 2}px, ${rect.y - (60 * scale)}px) scale(${scale})`,
+                left: screenLeft,
+                top: screenTop,
+                // Move up significantly (scaled) to avoid being "tightly above"
+                transform: `translate(-50%, -150%) scale(${zoom})`, 
             }}
         >
-            <div className="flex items-center gap-1 bg-zinc-950/90 border border-zinc-700 p-1.5 rounded-full shadow-2xl backdrop-blur-md -translate-x-1/2 pointer-events-auto">
+            <div className="flex items-center bg-[#18181b] border border-white/20 rounded-full shadow-[0_20px_50px_-10px_rgba(0,0,0,0.8)] p-1.5 pointer-events-auto backdrop-blur-xl gap-0 overflow-hidden min-w-max">
+               
+               {/* Cluster Button */}
                {canCluster && (
                  <>
-                    <button onClick={onCluster} className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/10 rounded-full text-zinc-300 hover:text-white transition-colors text-xs font-bold uppercase tracking-wide whitespace-nowrap">
-                        <BoxSelect size={12} className="text-blue-400"/> 
-                        Cluster
+                    <button 
+                        onClick={onCluster} 
+                        className="flex items-center gap-3 px-5 py-3 hover:bg-white/10 rounded-full text-zinc-400 hover:text-white transition-colors group"
+                    >
+                        <BoxSelect size={20} className="text-blue-400 group-hover:scale-110 transition-transform"/> 
+                        <span className="text-sm font-black tracking-widest uppercase font-sans">Cluster</span>
                     </button>
-                    <div className="w-px h-4 bg-white/10" />
+                    <div className="w-px h-6 bg-white/10 mx-1" />
                  </>
                )}
                
+               {/* RUN SEQ Button */}
                {showRunSeq && (
                  <>
-                    <button onClick={onRunSeq} className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/10 rounded-full text-zinc-300 hover:text-white transition-colors text-xs font-bold uppercase tracking-wide whitespace-nowrap">
-                        <Play size={12} className="text-green-400 fill-current"/> 
-                        Run Seq
+                    <button 
+                        onClick={onRunSeq} 
+                        className="flex items-center gap-4 px-6 py-3 hover:bg-white/10 rounded-full text-white transition-colors group"
+                    >
+                        <Play size={24} className="text-green-400 fill-green-400 group-hover:scale-110 transition-transform"/> 
+                        <span className="text-xl font-black tracking-wider uppercase font-sans">Run Seq</span>
                     </button>
-                    <div className="w-px h-4 bg-white/10" />
+                    <div className="w-px h-8 bg-white/10 mx-2" />
                  </>
                )}
                
-               <button onClick={onSave} className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/10 rounded-full text-zinc-300 hover:text-white transition-colors text-xs font-bold uppercase tracking-wide whitespace-nowrap">
-                  <Save size={12} className="text-amber-400"/> 
-                  Save
+               {/* SAVE Button */}
+               <button 
+                onClick={onSave} 
+                className="flex items-center gap-4 px-6 py-3 hover:bg-white/10 rounded-full text-white transition-colors group"
+               >
+                  <Save size={24} className="text-amber-400 group-hover:scale-110 transition-transform"/> 
+                  <span className="text-xl font-black tracking-wider uppercase font-sans">Save</span>
                </button>
                
+               {/* Ungroup */}
                {hasGroup && (
                    <>
-                    <div className="w-px h-4 bg-white/10" />
-                    <button onClick={onUngroup} className="flex items-center gap-2 px-3 py-1.5 hover:bg-red-500/10 rounded-full text-zinc-300 hover:text-red-400 transition-colors text-xs font-bold uppercase tracking-wide whitespace-nowrap">
-                        <Ungroup size={12}/> 
-                        Ungroup
+                    <div className="w-px h-8 bg-white/10 mx-2" />
+                    <button 
+                        onClick={onUngroup} 
+                        className="flex items-center gap-3 px-5 py-3 hover:bg-red-500/20 rounded-full text-zinc-400 hover:text-red-400 transition-colors group"
+                    >
+                        <Ungroup size={20} className="group-hover:scale-110 transition-transform"/> 
+                        <span className="text-sm font-black tracking-widest uppercase font-sans">Ungroup</span>
                     </button>
                    </>
                )}
